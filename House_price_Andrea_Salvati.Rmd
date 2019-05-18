@@ -36,11 +36,12 @@ original_training_data = read.csv(file = file.path("house_price_train.csv"))
 original_test_data = read.csv(file = file.path("house_price_test.csv"))
 ```
 
-To avoid applying the Feature Engineering process two times (once for training and once for test), I will join both datasets (using the `rbind` function), apply the FE and then split the datasets again. However, if I try to do join the two dataframes as they are, we will get an error because they do not have the same columns: `test_data` does not have a column `SalePrice`. Therefore, I first create this column in the test set and then we join the data
+To avoid applying the Feature Engineering process two times (once for training and once for test), I will join both datasets (using the `rbind` function), apply the FE and then split the datasets again. However, if I try to do join the two dataframes as they are, we will get an error because they do not have the same columns: `test_data` does not have a column `price`. Therefore, I first create this column in the test set and then we join the data
 
 ```{r Joinning datasets}
 original_test_data$price <- 0
-dataset <- rbind(original_training_data, original_test_data)
+dataset <- as.data.table(rbind(original_training_data, original_test_data))
+class(dataset)
 ```
 
 Let's now visualize the dataset to see where to begin
@@ -55,8 +56,8 @@ In this section I am going to preform some data cleaning.
 The feature `Id` present a unique value, consequently it is not going to offer any advantage for prediction.
 
 ```{r Dataset Visualization}
+dataset[, c('id', 'date'):=NULL]
 colnames(dataset)
-dataset <- dataset[,-which(names(dataset) == "id")]
 ```
 
 ## Factorize features
@@ -66,6 +67,12 @@ If we go back to the summary of the dataset we can identify some numerical featu
 ```{r Dataset Visualization}
 dataset$condition <- factor(dataset$condition)
 dataset$grade <- factor(dataset$grade)
+dataset$zipcode <- factor(dataset$grade)
+#dataset$date <- as.Date.character(dataset$date, '%m/%d/%Y')
+
+# lets now turn characters into factors
+dataset[ ,names(dataset)[sapply(dataset, is.character)]:=lapply(.SD,as.factor),
+           .SDcols = names(dataset)[sapply(dataset, is.character)]]
 ```
 
 ## Hunting NAs
@@ -84,23 +91,23 @@ We will now focus on numerical values. If `NAs` where the natural enemy of categ
 
 In this section we seek to identify outliers to then properly deal with them. If we summarize the dataset, we can see variables which "Max." is much larger than the rest of values. These features are susceptible of containing outliers.
 
-Here I compare the columns with outliers to the target variable (`SalePrice`) to visually check if there are some extreme values and just consider those as outliers.
+Here I compare the columns with outliers to the target variable (`price`) to visually check if there are some extreme values and just consider those as outliers.
 
 ```{r Outlier detection}
 #Classify all numeric columns
-numeric <- names(dataset[, sapply(dataset, is.numeric)])
+numeric <- names(dataset[,sapply(dataset, is.numeric)])
 
 #Select columns containing outliers with coef = 5
 num_variables_containing_outliers <- c();
 for (i in numeric){
-    if(length(boxplot.stats(dataset[,i], coef = 5)$out) != 0){
+    if(length(boxplot.stats(dataset$i, coef = 5)$out) != 0){
       num_variables_containing_outliers <- append(num_variables_containing_outliers, i);
     }
 }
 
 #Plot each variable against Sales Price
 for (i in num_variables_containing_outliers){
-  plot(dataset[,i], dataset[,"price"], type="p", xlab=i)
+  plot(dataset$i, dataset$price, type="p", xlab=i)
 }
 ```
 
@@ -143,7 +150,7 @@ dataset$price <- log1p(dataset$price)
 
 The same "skewness" observed in the target variable also affects other variables. To facilitate the application of the regression model we are going to also eliminate this skewness. For numeric feature with excessive skewness, perform log transformation
 
-I will set up my threshold for the skewness in 1. I place that value in that variable to adjust its value in a single place, in case I have to perform multiple tests.
+I will set up my threshold for the skewness in 0.75. I place that value in that variable to adjust its value in a single place, in case I have to perform multiple tests.
 
 ```{r}
 skewness_threshold = 1
@@ -161,6 +168,7 @@ column_types <- sapply(names(dataset), function(x) {
   }
 )
 numeric_columns <- names(column_types[column_types != "factor"])
+numeric_columns
 ```
 
 And now, with that information, we need to calculate the skewness of each column whose name is our list of __factor__ (or categorical) features. We use the `sapply` method again, to compute the skewness of each column whose name is in the list of `numeric_columns`.
@@ -184,4 +192,73 @@ for(x in names(skew)) {
 # Feature Creation
 
 In this section I will create some new features to improve the predictive power of the dataset.
+
+```{r}
+# having a look at the columns
+colnames(dataset)
+```
+```{r}
+dataset$TotalSqFeet <- as.numeric(dataset$sqft_basement + dataset$sqft_above + dataset$sqft_lot + dataset$sqft_living)
+dataset$Remod <- ifelse(dataset$yr_built==dataset$yr_renovated, 0, 1) #0=No Remodeling, 1=Remodeling
+```
+
+```{r}
+# We analyze the counting per zipcode:
+sort(summary(dataset$zipcode), dec=T)/nrow(dataset)
+p<-ggplot(dataset, aes(x=zipcode))+geom_bar(stat='count')+
+  theme(axis.text.x = element_text(angle=45))
+p
+```
+```{r}
+# lets re-order the factor levels of make in decreasing order
+dataset[, zipcode:=factor(zipcode, levels=names(sort(summary(dataset$zipcode), dec=T)))]
+levels(dataset$zipcode)
+```
+```{r}
+# We will create a label that will agregate into "others" those zipcode with less than 3% of share
+niche_zipcode<-names(which(summary(dataset$zipcode)/nrow(dataset)<0.03))
+niche_zipcode
+
+dataset[, zipcode_agg:=as.factor(ifelse(zipcode%in%niche_zipcode,'others',as.character(zipcode)))]
+
+summary(dataset$zipcode)/nrow(dataset)
+summary(dataset$zipcode_agg)/nrow(dataset)
+sum(summary(dataset$zipcode_agg)/nrow(dataset)) 
+
+dataset[, length(levels(zipcode_agg))]
+dataset[, length(levels(zipcode))]
+dataset[, length(levels(zipcode_agg))/length(levels(zipcode))-1] # important reduction in factor cathegories
+
+
+dataset[, zipcode_agg:=factor(zipcode_agg, levels=names(sort(summary(dataset$zipcode_agg), dec=T)))]
+p<-ggplot(dataset, aes(x=zipcode_agg))+geom_bar(stat='count')+
+  theme(axis.text.x = element_text(angle=45))
+p
+
+# we drop off the former zipcode variable
+dataset[, zipcode:=NULL]
+```
+
+
+```{r}
+# Now lets check the number of categories per factor variable
+factor_variables<-names(dataset)[sapply(dataset, is.factor)]
+count_factor_variables<-sapply(dataset[,factor_variables, with=F], summary)
+count_factor_variables
+```
+
+```{r}
+# Now lets check the number of categories per factor variable
+data_ready<-caret::dummyVars(formula= ~., data = dataset, fullRank=T,sep = "_")
+data_ready<-data.table(predict(data_ready, newdata = dataset))
+
+names(data_ready)<-gsub('-','_',names(data_ready))
+```
+
+# Modelling
+
+## Train, Validation Spliting
+
+
+
 
