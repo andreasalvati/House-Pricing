@@ -1,0 +1,187 @@
+---
+title: "Individual Assignment - Advanced R"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+author: Andrea Salvati
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(plyr)
+library(dplyr)     # To compute the `union` of the levels.
+library(png)       # To include images in this document.
+library(knitr)     # To include images inline in this doc.
+library(moments)   # Skewness
+library(e1071)     # Alternative for Skewness
+library(glmnet)    # Lasso
+library(caret)     # To enable Lasso training with CV.
+library(FSelector) # To use information gain for Feature Selection
+library(data.table)
+```
+
+
+# Introduction
+
+This assignment focuses on applying the Feature Engineering processes and the Evaluation methods to solve a practical scenario: Predict the price of houses.
+
+# Data Reading and preparation
+
+The dataset is offered in two separated fields, one for the training and another one for the test set. 
+
+```{r Load Data}
+original_training_data = read.csv(file = file.path("house_price_train.csv"))
+original_test_data = read.csv(file = file.path("house_price_test.csv"))
+```
+
+To avoid applying the Feature Engineering process two times (once for training and once for test), I will join both datasets (using the `rbind` function), apply the FE and then split the datasets again. However, if I try to do join the two dataframes as they are, we will get an error because they do not have the same columns: `test_data` does not have a column `SalePrice`. Therefore, I first create this column in the test set and then we join the data
+
+```{r Joinning datasets}
+original_test_data$price <- 0
+dataset <- rbind(original_training_data, original_test_data)
+```
+
+Let's now visualize the dataset to see where to begin
+```{r Dataset Visualization}
+summary(dataset)
+```
+
+# Data Cleaning
+
+In this section I am going to preform some data cleaning.
+
+The feature `Id` present a unique value, consequently it is not going to offer any advantage for prediction.
+
+```{r Dataset Visualization}
+colnames(dataset)
+dataset <- dataset[,-which(names(dataset) == "id")]
+```
+
+## Factorize features
+
+If we go back to the summary of the dataset we can identify some numerical features that are actually categories: What we have to do is to convert them to the proper 'class' or 'type' using the `as.factor` command.
+
+```{r Dataset Visualization}
+dataset$condition <- factor(dataset$condition)
+dataset$grade <- factor(dataset$grade)
+```
+
+## Hunting NAs
+
+Let's check if there are NAs in the dataset
+
+```{r NAs discovery}
+#Counting columns with null values.
+na.cols <- which(colSums(is.na(dataset)) > 0)
+paste('There are', length(na.cols), 'columns with missing values')
+```
+
+## Outliers
+
+We will now focus on numerical values. If `NAs` where the natural enemy of categorical values, the main problem with numerical values are outliers (values which largely differ from the rest). Outliers can mislead the training of our models resulting in less accurate models and ultimately worse results.
+
+In this section we seek to identify outliers to then properly deal with them. If we summarize the dataset, we can see variables which "Max." is much larger than the rest of values. These features are susceptible of containing outliers.
+
+Here I compare the columns with outliers to the target variable (`SalePrice`) to visually check if there are some extreme values and just consider those as outliers.
+
+```{r Outlier detection}
+#Classify all numeric columns
+numeric <- names(dataset[, sapply(dataset, is.numeric)])
+
+#Select columns containing outliers with coef = 5
+num_variables_containing_outliers <- c();
+for (i in numeric){
+    if(length(boxplot.stats(dataset[,i], coef = 5)$out) != 0){
+      num_variables_containing_outliers <- append(num_variables_containing_outliers, i);
+    }
+}
+
+#Plot each variable against Sales Price
+for (i in num_variables_containing_outliers){
+  plot(dataset[,i], dataset[,"price"], type="p", xlab=i)
+}
+```
+
+Now, looking at the graphs we can identify the outlier to remove and the threshold to apply.
+```{r Outlier removal}
+# check the original numebr of rows in the training set
+a <- nrow(dataset[which(dataset$price!=0),])
+
+# I am revoing the outlier just in the training set. This is why I have to specify the price different than 0
+dataset <- dataset[-which(dataset[,"bathrooms"] > 7 & dataset[,"price"] !=0),]
+dataset <- dataset[-which(dataset[,"sqft_above"] > 8000 & dataset[,"price"] !=0),]
+dataset <- dataset[-which(dataset[,"sqft_basement"] > 4000 & dataset[,"price"] !=0),]
+dataset <- dataset[-which(dataset[,"sqft_lot15"] > 8e+05 & dataset[,"price"] !=0),]
+
+# check n rows removed
+b <- nrow(dataset[which(dataset$price!=0),])
+
+removed_rows <- a - b
+print(removed_rows)
+```
+
+## Skewness
+
+We now need to detect skewness in the Target value. Let's see what is the effect of skewness on a variable, and plot it using ggplot. The way of getting rid of the skewness is to use the `log` (or the `log1p`) of the values of that feature, to flatten it. To reduce right skewness, take roots or logarithms or reciprocals (x to 1/x). 
+
+```{r}
+df <- rbind(data.frame(version="price",x=original_training_data$price),
+            data.frame(version="log(price+1)",x=log(original_training_data$price + 1)))
+
+ggplot(data=df) +
+  facet_wrap(~version,ncol=2,scales="free_x") +
+  geom_histogram(aes(x=x), bins = 50)
+```
+
+We therefore transform the target value applying log
+```{r Log transform the target for official scoring}
+# Log transform the target for official scoring
+dataset$price <- log1p(dataset$price)
+```
+
+The same "skewness" observed in the target variable also affects other variables. To facilitate the application of the regression model we are going to also eliminate this skewness. For numeric feature with excessive skewness, perform log transformation
+
+I will set up my threshold for the skewness in 1. I place that value in that variable to adjust its value in a single place, in case I have to perform multiple tests.
+
+```{r}
+skewness_threshold = 1
+```
+
+Now, let's compute the skewness of each feature that is not 'factor' nor 'character'. So, I'm only interested in continuous values. One possible way of doing it is the following: First, lets determine what is the 'class' or data type of each of my features.
+
+To do so, instead of `loops`, we will use the `apply` family of functions. They will __apply__ a method to each **row** or **column** of your dataset. It will depend on what to do specify as the first argument of the method. 
+
+What we want to determine is the class of each column or feature, and to do so, we use the `class` method from R. We will pass the actual column or feature from our dataset (dataframe):
+
+```{r}
+column_types <- sapply(names(dataset), function(x) {
+    class(dataset[[x]])
+  }
+)
+numeric_columns <- names(column_types[column_types != "factor"])
+```
+
+And now, with that information, we need to calculate the skewness of each column whose name is our list of __factor__ (or categorical) features. We use the `sapply` method again, to compute the skewness of each column whose name is in the list of `numeric_columns`.
+```{r}
+# skew of each variable
+skew <- sapply(numeric_columns, function(x) { 
+    e1071::skewness(dataset[[x]], na.rm = T)
+  }
+)
+```
+
+What we do need to make now is to apply the log to those whose skewness value is below a given threshold that we've set in 0.75. We should test different hypothesis with our threshold too.
+```{r}
+# transform all variables above a threshold skewness.
+skew <- skew[abs(skew) > skewness_threshold]
+for(x in names(skew)) {
+  dataset[[x]] <- log(dataset[[x]] + 1)
+}
+```
+
+# Feature Creation
+
+In this section I will create some new features to improve the predictive power of the dataset.
+
