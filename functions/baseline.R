@@ -6,10 +6,10 @@ lm.model <- function(training_dataset, validation_dataset, title) {
                                        returnResamp = "all")
   
   # Fit a glm model to the input training data
-  this.model <- train(SalePrice ~ ., 
+  this.model <- train(price ~ ., 
                       data = training_dataset, 
                       method = "glm", 
-                      metric = "RMSE",
+                      metric = "MAPE",
                       preProc = c("center", "scale"),
                       trControl=train_control_config)
   
@@ -18,20 +18,18 @@ lm.model <- function(training_dataset, validation_dataset, title) {
   this.model.pred[is.na(this.model.pred)] <- 0 # To avoid null predictions
   
   # RMSE of the model
-  thismodel.rmse <- sqrt(mean((this.model.pred - validation_dataset$SalePrice)^2))
+  thismodel.mape <- mape(validation_dataset$price, this.model.pred)
   
   # Error in terms of the mean deviation between the predicted value and the price of the houses
-  thismodel.price_error <- mean(abs((exp(this.model.pred) -1) - (exp(validation_dataset$SalePrice) -1)))
+  thismodel.price_error <- mean(abs((exp(this.model.pred) -1) - (exp(validation_dataset$price) -1)))
   
   # Plot the predicted values against the actual prices of the houses
-  my_data <- as.data.frame(cbind(predicted=(exp(this.model.pred) -1), observed=(exp(validation_dataset$SalePrice) -1)))
+  my_data <- as.data.frame(cbind(predicted=(exp(this.model.pred) -1), observed=(exp(validation_dataset$price) -1)))
   ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "lm") +
     labs(x="Predicted") +
-    ggtitle(ggtitle(paste(title, 'RMSE: ', format(round(thismodel.rmse, 4), nsmall=4), ' --> Price ERROR:', format(round(thismodel.price_error, 0), nsmall=0), 
+    ggtitle(ggtitle(paste(title, 'MAPE: ', format(round(thismodel.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(thismodel.price_error, 0), nsmall=0), 
                           ' €', sep=''))) +  
     scale_x_continuous(labels = scales::comma) + 
     scale_y_continuous(labels = scales::comma)
 }
-
-

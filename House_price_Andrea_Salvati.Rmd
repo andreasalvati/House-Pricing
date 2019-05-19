@@ -20,6 +20,7 @@ library(glmnet)    # Lasso
 library(caret)     # To enable Lasso training with CV.
 library(FSelector) # To use information gain for Feature Selection
 library(data.table)
+library(Metrics)
 ```
 
 
@@ -135,7 +136,7 @@ We now need to detect skewness in the Target value. Let's see what is the effect
 
 ```{r}
 df <- rbind(data.frame(version="price",x=original_training_data$price),
-            data.frame(version="log(price+1)",x=log(original_training_data$price + 1)))
+            data.frame(version="log(price+1)",x=log1p(original_training_data$price + 1)))
 
 ggplot(data=df) +
   facet_wrap(~version,ncol=2,scales="free_x") +
@@ -197,6 +198,7 @@ In this section I will create some new features to improve the predictive power 
 # having a look at the columns
 colnames(dataset)
 ```
+
 ```{r}
 dataset$TotalSqFeet <- as.numeric(dataset$sqft_basement + dataset$sqft_above + dataset$sqft_lot + dataset$sqft_living)
 dataset$Remod <- ifelse(dataset$yr_built==dataset$yr_renovated, 0, 1) #0=No Remodeling, 1=Remodeling
@@ -209,11 +211,13 @@ p<-ggplot(dataset, aes(x=zipcode))+geom_bar(stat='count')+
   theme(axis.text.x = element_text(angle=45))
 p
 ```
+
 ```{r}
 # lets re-order the factor levels of make in decreasing order
 dataset[, zipcode:=factor(zipcode, levels=names(sort(summary(dataset$zipcode), dec=T)))]
 levels(dataset$zipcode)
 ```
+
 ```{r}
 # We will create a label that will agregate into "others" those zipcode with less than 3% of share
 niche_zipcode<-names(which(summary(dataset$zipcode)/nrow(dataset)<0.03))
@@ -259,6 +263,265 @@ names(data_ready)<-gsub('-','_',names(data_ready))
 
 ## Train, Validation Spliting
 
+To facilitate the data cleaning and feature engineering we merged train and test datasets. We now split them again to create our final model.
+
+```{r Train test split}
+training_data <- data_ready[which(data_ready$price!=0),]
+test <- data_ready[which(data_ready$price==0),]
+```
+
+We are going to split the annotated dataset in training and validation for the later evaluation of our regression models
+```{r Train Validation split}
+# I found this function, that is worth to save for future ocasions.
+source('functions/Split_Datasets_function.R')
+splits <- splitdf(training_data)
+training <- splits$trainset
+validation <- splits$testset
+```
+
+## Feature Selection
+We here start the Feature Selection.
+
+### Filtering Methods
+We will rank the features according to their predictive power according to the methodologies seen in class: the Chi Squared Independence test and the Information Gain.
+
+#### Full Model
+
+Let's try first a baseline including all the features to evaluate the impact of the feature engineering.
+
+```{r message=FALSE, warning=FALSE}
+source('functions/baseline.R')
+lm.model(training, validation, "Baseline")
+```
 
 
 
+#### Information Gain Selection
+
+Let's also try to use information gain to select the most important variables. In this section I will also use a cross validation procedure to select the best threshold for my model.
+```{r cross validation information gain, message=FALSE, warning=FALSE}
+# using cross validation to find the optimal trashold
+source('functions/lm_cross_validation.R')
+source('functions/baseline.R')
+
+weights<- data.table(information.gain(price ~ ., training))
+weights$feature <- rownames(weights)
+weights[order(weights$attr_importance, decreasing = TRUE),]
+
+ig_mapes <- c()
+ig_index <- c()
+
+for (i in seq(0.001,0.009,0.001)){
+information_gain_features <- weights$feature[weights$attr_importance > i]
+weights <- data.table(information.gain(price ~ ., data = training[, price := training$price]))
+weights$feature <- rownames(weights)
+weights[order(weights$attr_importance, decreasing = TRUE),]
+
+ig_training <- training[, price := training$price]
+ig_test <- test[, price := training$price]
+ig_validation <- validation[, price := training$price]
+
+mapes <- lm.model_cross_validation(ig_training, ig_validation)
+
+ig_mapes <- c(ig_mapes, mapes)
+ig_index <- c(ig_index,i)
+}
+
+ig_cross_validation <- data.table(score=ig_mapes,indexes=ig_index)
+ig_cross_validation_threshold <- ig_cross_validation[score == min(score),][1,indexes]
+
+# applying information gain with the optimal trashold found
+
+weights<- data.frame(information.gain(price ~ ., training))
+weights$feature <- rownames(weights)
+weights[order(weights$attr_importance, decreasing = TRUE),]
+information_gain_features <- weights$feature[weights$attr_importance > ig_cross_validation_threshold]
+
+weights<- data.frame(information.gain(price ~ ., data = training[, price := training$price]))
+
+ig_training <- training[, price := training$price]
+ig_test <- test[, price := training$price]
+ig_validation <- validation[, price := training$price]
+
+lm.model(ig_training, ig_validation, "Information Gain")
+```
+
+#### Ridge Regression
+
+Let's try the Ridge Regression
+```{r Ridge Regression, warning=FALSE}
+lambdas <- 10^seq(-3, 0, by = .05)
+
+set.seed(121)
+train_control_config <- trainControl(method = "repeatedcv", 
+                                     number = 5, 
+                                     repeats = 1,
+                                     returnResamp = "all")
+
+ridge.mod <- train(price ~ ., data = training, 
+               method = "glmnet", 
+               metric = "MAPE",
+               trControl=train_control_config,
+               tuneGrid = expand.grid(alpha = 0, lambda = lambdas))
+```
+
+##### Evaluation
+
+Plotting the RMSE for the different lambda values, we can see the impact of this parameter in the model performance.
+Small values seem to work better for this dataset.
+
+```{r Ridge RMSE}
+plot(ridge.mod)
+```
+
+Plotting the coefficients for different lambda values. As expected the larger the lambda (lower Norm) value the smaller the coefficients of the features. However, as we can see at the top of the features, there is no feature selection; i.e., the model always consider the 225 parameters.
+
+```{r Ridge Coefficients}
+plot(ridge.mod$finalModel)
+```
+
+```{r Ridge Evaluation}
+ridge.mod.pred <- predict(ridge.mod, validation)
+ridge.mod.pred[is.na(ridge.mod.pred)] <- 0
+
+my_data <- as.data.frame(cbind(predicted=(exp(ridge.mod.pred) -1), observed=(exp(validation$price) -1)))
+ridge.mod.mape <- sqrt(mean((ridge.mod.pred - validation$price)^2))
+ridge.mod.price_error <- mean(abs((exp(ridge.mod.pred) -1) - (exp(validation$price) -1)))
+
+ggplot(my_data, aes(predicted, observed)) +
+    geom_point() + geom_smooth(method = "glm") +
+    labs(x="Predicted") +
+    ggtitle(ggtitle(paste("Ridge", 'MAPE: ', format(round(ridge.mod.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(ridge.mod.price_error, 0), nsmall=0), 
+                        '€', sep=''))) +  
+    scale_x_continuous(labels = scales::comma) + 
+    scale_y_continuous(labels = scales::comma)
+
+```
+
+
+Rank the variables according to the importance attributed by the model.
+```{r}
+# Print, plot variable importance
+plot(varImp(ridge.mod), top = 20) # 20 most important features
+```
+
+### Lasso Regresion
+
+Now Let's try lasso in combination with information gain. Moreover, I will use cross validation to identify the best number of seed
+```{r Cross Validation Lasso Regression, warning=FALSE}
+# cross validation
+lasso_mape <- c()
+lasso_index <- c()
+
+for (i in seq(20,30,1)){
+  
+lambdas <- 10^seq(-3, 0, by = .05)
+
+set.seed(i)
+train_control_config <- trainControl(method = "repeatedcv", 
+                                     number = 5, 
+                                     repeats = 1,
+                                     returnResamp = "all")
+
+lasso.mod_cv <- train(price ~ ., data = ig_training, 
+               method = "glmnet", 
+               metric = "MAPE",
+               trControl=train_control_config,
+               tuneGrid = expand.grid(alpha = 1, lambda = lambdas))
+
+lasso.mod.pred <- predict(lasso.mod_cv, validation)
+lasso.mod.pred[is.na(lasso.mod.pred)] <- 0
+
+my_data <- as.data.frame(cbind(predicted=(exp(lasso.mod.pred) -1), observed=(exp(validation$price) -1)))
+lasso.mod.mape <- mape(lasso.mod.pred, validation$price)
+
+lasso_mape <- c(lasso_mape, lasso.mod.mape)
+lasso_index <- c(lasso_index, i)
+}
+
+lasso_cross_validation <- data.table(score=lasso_mape, indexes=lasso_index)
+# optimal seed
+lasso_seed <- lasso_cross_validation[score == min(score),][1,indexes]
+
+```
+
+```{r Lasso Regression, warning=FALSE}
+# applying the lasso regression with the optimal seed value found above.
+lambdas <- 10^seq(-3, 0, by = .05)
+
+set.seed(lasso_seed)
+train_control_config <- trainControl(method = "repeatedcv", 
+                                     number = 5, 
+                                     repeats = 1,
+                                     returnResamp = "all")
+
+lasso.mod <- train(price ~ ., data = training, 
+               method = "glmnet", 
+               metric = "MAPE",
+               trControl=train_control_config,
+               tuneGrid = expand.grid(alpha = 1, lambda = lambdas))
+
+```
+
+#### Evaluation
+
+Plotting the RMSE for the different lambda values, we can see the impact of this parameter in the model performance.
+Small values seem to work better for this dataset.
+
+```{r lasso RMSE}
+plot(lasso.mod)
+```
+
+Plotting the coefficients for different lambda values. As expected the larger the lambda (lower Norm) value the smaller the coefficients of the features. However, as we can see at the top of the features, there is no feature selection; i.e., the model always consider the 225 parameters.
+
+```{r lasso Coefficients}
+plot(lasso.mod$finalModel)
+```
+
+```{r lasso Evaluation}
+# evaluating the model
+lasso.mod.pred <- predict(lasso.mod, validation)
+lasso.mod.pred[is.na(lasso.mod.pred)] <- 0
+
+my_data <- as.data.frame(cbind(predicted=(exp(lasso.mod.pred) -1), observed=(exp(validation$price) -1)))
+lasso.mod.mape <- mape(lasso.mod.pred, validation$price)
+lasso.mod.price_error <- mean(abs((exp(lasso.mod.pred) -1) - (exp(validation$price) -1)))
+
+ggplot(my_data, aes(predicted, observed)) +
+    geom_point() + geom_smooth(method = "glm") +
+    labs(x="Predicted") +
+    ggtitle(ggtitle(paste("lasso", 'RMSE: ', format(round(lasso.mod.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(lasso.mod.price_error, 0), nsmall=0), 
+                        ' €', sep=''))) +  
+    scale_x_continuous(labels = scales::comma) + 
+    scale_y_continuous(labels = scales::comma)
+
+```
+
+
+Rank the variables according to the importance attributed by the model.
+```{r}
+# Print, plot variable importance
+plot(varImp(lasso.mod), top = 20) # 20 most important features
+```
+
+# Final Submission
+We splitted the original training data into train and validation to evaluate the candidate models. In order to generate the final submission we have to take instead all the data at our disposal.
+
+In addition, we also applied a log transformation to the target variable, to revert this transformation you have to use the exp function.
+
+In order to do my prediction I have tried all the combination of the models explained above. The best model is the lasso regression combined with information gain.
+
+```{r Final Submission}
+# Train the model using all the data
+final.model <- lasso.mod
+
+# Predict the prices for the test data (i.e., we use the exp function to revert the log transformation that we applied to the target variable)
+final.pred <- as.numeric(exp(predict(final.model, test))-1) 
+final.pred[is.na(final.pred)]
+hist(final.pred, main="Histogram of Predictions", xlab = "Predictions")
+
+lasso_submission <- data.frame(Id = original_test_data$id, price= (final.pred))
+colnames(lasso_submission) <-c("Id", "SalePrice")
+write.csv(lasso_submission, file = "submission1.csv", row.names = FALSE) 
+
+```
