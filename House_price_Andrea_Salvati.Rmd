@@ -20,7 +20,6 @@ library(glmnet)    # Lasso
 library(caret)     # To enable Lasso training with CV.
 library(FSelector) # To use information gain for Feature Selection
 library(data.table)
-library(Metrics)
 ```
 
 
@@ -290,6 +289,7 @@ We will rank the features according to their predictive power according to the m
 Let's try first a baseline including all the features to evaluate the impact of the feature engineering.
 
 ```{r message=FALSE, warning=FALSE}
+source('functions/regression_metrics.R')
 source('functions/baseline.R')
 lm.model(training, validation, "Baseline")
 ```
@@ -300,51 +300,28 @@ lm.model(training, validation, "Baseline")
 
 Let's also try to use information gain to select the most important variables. In this section I will also use a cross validation procedure to select the best threshold for my model.
 ```{r cross validation information gain, message=FALSE, warning=FALSE}
-# using cross validation to find the optimal trashold
 source('functions/lm_cross_validation.R')
 source('functions/baseline.R')
+source('functions/information_gain_CV.R')
 
-weights<- data.table(information.gain(price ~ ., training))
-weights$feature <- rownames(weights)
-weights[order(weights$attr_importance, decreasing = TRUE),]
-
-ig_mapes <- c()
-ig_index <- c()
-
-for (i in seq(0.001,0.009,0.001)){
-information_gain_features <- weights$feature[weights$attr_importance > i]
-weights <- data.table(information.gain(price ~ ., data = training[, price := training$price]))
-weights$feature <- rownames(weights)
-weights[order(weights$attr_importance, decreasing = TRUE),]
-
-ig_training <- training[, price := training$price]
-ig_test <- test[, price := training$price]
-ig_validation <- validation[, price := training$price]
-
-mapes <- lm.model_cross_validation(ig_training, ig_validation)
-
-ig_mapes <- c(ig_mapes, mapes)
-ig_index <- c(ig_index,i)
-}
-
-ig_cross_validation <- data.table(score=ig_mapes,indexes=ig_index)
-ig_cross_validation_threshold <- ig_cross_validation[score == min(score),][1,indexes]
+# using cross validation to find the optimal trashold
+#information_gain_CV(training, validation, test, int_min = 0.01, int_max = 0.05, steps = 0.01)
 
 # applying information gain with the optimal trashold found
-
 weights<- data.frame(information.gain(price ~ ., training))
 weights$feature <- rownames(weights)
 weights[order(weights$attr_importance, decreasing = TRUE),]
-information_gain_features <- weights$feature[weights$attr_importance > ig_cross_validation_threshold]
+information_gain_features <- weights$feature[weights$attr_importance > 0.005]
 
-weights<- data.frame(information.gain(price ~ ., data = training[, price := training$price]))
+weights<- data.frame(information.gain(price ~ ., data = training[,c(information_gain_features,"price"),with=FALSE]))
 
-ig_training <- training[, price := training$price]
-ig_test <- test[, price := training$price]
-ig_validation <- validation[, price := training$price]
+ig_training <- training[,c(information_gain_features,"price"),with=FALSE]
+ig_test <- test[,c(information_gain_features,"price"),with=FALSE]
+ig_validation <- validation[,c(information_gain_features,"price"),with=FALSE]
 
 lm.model(ig_training, ig_validation, "Information Gain")
 ```
+
 
 #### Ridge Regression
 
@@ -391,7 +368,7 @@ ridge.mod.price_error <- mean(abs((exp(ridge.mod.pred) -1) - (exp(validation$pri
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
-    ggtitle(ggtitle(paste("Ridge", 'MAPE: ', format(round(ridge.mod.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(ridge.mod.price_error, 0), nsmall=0), 
+    ggtitle(ggtitle(paste("Ridge", ' MAPE: ', format(round(ridge.mod.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(ridge.mod.price_error, 0), nsmall=0), 
                         '€', sep=''))) +  
     scale_x_continuous(labels = scales::comma) + 
     scale_y_continuous(labels = scales::comma)
@@ -490,7 +467,7 @@ lasso.mod.price_error <- mean(abs((exp(lasso.mod.pred) -1) - (exp(validation$pri
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
-    ggtitle(ggtitle(paste("lasso", 'RMSE: ', format(round(lasso.mod.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(lasso.mod.price_error, 0), nsmall=0), 
+    ggtitle(ggtitle(paste("lasso", ' MAPE: ', format(round(lasso.mod.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(lasso.mod.price_error, 0), nsmall=0), 
                         ' €', sep=''))) +  
     scale_x_continuous(labels = scales::comma) + 
     scale_y_continuous(labels = scales::comma)

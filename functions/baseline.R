@@ -28,7 +28,7 @@ lm.model <- function(training_dataset, validation_dataset, title) {
   ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "lm") +
     labs(x="Predicted") +
-    ggtitle(ggtitle(paste(title, 'MAPE: ', format(round(thismodel.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(thismodel.price_error, 0), nsmall=0), 
+    ggtitle(ggtitle(paste(title,' MAPE: ', format(round(thismodel.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(thismodel.price_error, 0), nsmall=0), 
                           ' €', sep=''))) +  
     scale_x_continuous(labels = scales::comma) + 
     scale_y_continuous(labels = scales::comma)
