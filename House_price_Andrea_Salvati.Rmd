@@ -90,40 +90,37 @@ In this section we seek to identify outliers to then properly deal with them. If
 
 Here I compare the columns with outliers to the target variable (`price`) to visually check if there are some extreme values and just consider those as outliers.
 
-```{r Outlier detection}
-#Classify all numeric columns
-numeric <- names(dataset[,sapply(dataset, is.numeric)])
 
-#Select columns containing outliers with coef = 5
-num_variables_containing_outliers <- c();
-for (i in numeric){
-    if(length(boxplot.stats(dataset$i, coef = 5)$out) != 0){
-      num_variables_containing_outliers <- append(num_variables_containing_outliers, i);
-    }
-}
+```{r}
+#Classify all numeric columns
+column_types <- sapply(names(dataset), function(x) {
+    class(dataset[[x]])
+  }
+)
+numeric_columns <- names(column_types[column_types != "factor"])
+outliers <- scores(dataset[,numeric_columns, with=FALSE], type="chisq", prob=0.9)
+per_outliers <- sort(((colSums(outliers)/length(dataset$price))*100), decreasing = TRUE)
+col_outliers_to_remove <- names(per_outliers[per_outliers > 5])
 
 #Plot each variable against Sales Price
-for (i in num_variables_containing_outliers){
-  plot(dataset$i, dataset$price, type="p", xlab=i)
+for (i in col_outliers_to_remove){
+  boxplot(dataset[,i, with=FALSE], type="p", xlab=i)
 }
 ```
 
-Now, looking at the graphs we can identify the outlier to remove and the threshold to apply.
-```{r Outlier removal}
-# check the original numebr of rows in the training set
-a <- nrow(dataset[which(dataset$price!=0),])
+```{r}
+for (i in col_outliers_to_remove){
+  qnt <- quantile(dataset[[i]], probs=c(.25, .75))
+  caps <- quantile(dataset[[i]], probs=c(.05, .95))
+  H <- 1.5 * IQR(dataset[[i]])
+  dataset[[i]][dataset[[i]] < (qnt[1] - H)] <- caps[1]
+  dataset[[i]][dataset[[i]] > (qnt[2] + H)] <- caps[2]
+}
 
-# I am revoing the outlier just in the training set. This is why I have to specify the price different than 0
-dataset <- dataset[-which(dataset[,"bathrooms"] > 7 & dataset[,"price"] !=0),]
-dataset <- dataset[-which(dataset[,"sqft_above"] > 8000 & dataset[,"price"] !=0),]
-dataset <- dataset[-which(dataset[,"sqft_basement"] > 4000 & dataset[,"price"] !=0),]
-dataset <- dataset[-which(dataset[,"sqft_lot15"] > 8e+05 & dataset[,"price"] !=0),]
-
-# check n rows removed
-b <- nrow(dataset[which(dataset$price!=0),])
-
-removed_rows <- a - b
-print(removed_rows)
+#Plot each variable against Sales Price
+for (i in col_outliers_to_remove){
+  boxplot(dataset[,i, with=FALSE], type="p", xlab=i)
+}
 ```
 
 ## Skewness
@@ -264,7 +261,6 @@ test <- data_ready[which(data_ready$price==0),]
 
 We are going to split the annotated dataset in training and validation for the later evaluation of our regression models
 ```{r Train Validation split}
-# I found this function, that is worth to save for future ocasions.
 splits <- splitdf(training_data)
 training <- splits$trainset
 validation <- splits$testset
@@ -534,10 +530,10 @@ In order to do my prediction I have tried all the combination of the models expl
 
 ```{r Final Submission}
 # Train the model using all the data
-final.model <- lasso.mod
+final.model <- xgb_0
 
 # Predict the prices for the test data (i.e., we use the exp function to revert the log transformation that we applied to the target variable)
-final.pred <- as.numeric(exp(predict(final.model, test))-1) 
+final.pred <- as.numeric(exp(predict(final.model, as.matrix(test[, !'price', with=F]), type='response'))-1)
 final.pred[is.na(final.pred)]
 hist(final.pred, main="Histogram of Predictions", xlab = "Predictions")
 
