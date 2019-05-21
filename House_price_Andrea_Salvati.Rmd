@@ -9,17 +9,14 @@ author: Andrea Salvati
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-library(ggplot2)
-library(plyr)
-library(dplyr)     # To compute the `union` of the levels.
-library(png)       # To include images in this document.
-library(knitr)     # To include images inline in this doc.
-library(moments)   # Skewness
-library(e1071)     # Alternative for Skewness
-library(glmnet)    # Lasso
-library(caret)     # To enable Lasso training with CV.
-library(FSelector) # To use information gain for Feature Selection
-library(data.table)
+source('functions/load_libraries.R')
+source('functions/Split_Datasets_function.R')
+source('functions/regression_metrics.R')
+source('functions/baseline.R')
+source('functions/lm_cross_validation.R')
+source('functions/information_gain_CV.R')
+source('functions/lasso_CV.R')
+formula<-as.formula(price~.) 
 ```
 
 
@@ -32,8 +29,8 @@ This assignment focuses on applying the Feature Engineering processes and the Ev
 The dataset is offered in two separated fields, one for the training and another one for the test set. 
 
 ```{r Load Data}
-original_training_data = read.csv(file = file.path("house_price_train.csv"))
-original_test_data = read.csv(file = file.path("house_price_test.csv"))
+original_training_data = read.csv(file = file.path("dataset/house_price_train.csv"))
+original_test_data = read.csv(file = file.path("dataset/house_price_test.csv"))
 ```
 
 To avoid applying the Feature Engineering process two times (once for training and once for test), I will join both datasets (using the `rbind` function), apply the FE and then split the datasets again. However, if I try to do join the two dataframes as they are, we will get an error because they do not have the same columns: `test_data` does not have a column `price`. Therefore, I first create this column in the test set and then we join the data
@@ -135,7 +132,7 @@ We now need to detect skewness in the Target value. Let's see what is the effect
 
 ```{r}
 df <- rbind(data.frame(version="price",x=original_training_data$price),
-            data.frame(version="log(price+1)",x=log1p(original_training_data$price + 1)))
+            data.frame(version="log(price+1)",x=log(original_training_data$price + 1)))
 
 ggplot(data=df) +
   facet_wrap(~version,ncol=2,scales="free_x") +
@@ -143,10 +140,6 @@ ggplot(data=df) +
 ```
 
 We therefore transform the target value applying log
-```{r Log transform the target for official scoring}
-# Log transform the target for official scoring
-dataset$price <- log1p(dataset$price)
-```
 
 The same "skewness" observed in the target variable also affects other variables. To facilitate the application of the regression model we are going to also eliminate this skewness. For numeric feature with excessive skewness, perform log transformation
 
@@ -272,7 +265,6 @@ test <- data_ready[which(data_ready$price==0),]
 We are going to split the annotated dataset in training and validation for the later evaluation of our regression models
 ```{r Train Validation split}
 # I found this function, that is worth to save for future ocasions.
-source('functions/Split_Datasets_function.R')
 splits <- splitdf(training_data)
 training <- splits$trainset
 validation <- splits$testset
@@ -289,8 +281,6 @@ We will rank the features according to their predictive power according to the m
 Let's try first a baseline including all the features to evaluate the impact of the feature engineering.
 
 ```{r message=FALSE, warning=FALSE}
-source('functions/regression_metrics.R')
-source('functions/baseline.R')
 lm.model(training, validation, "Baseline")
 ```
 
@@ -300,20 +290,14 @@ lm.model(training, validation, "Baseline")
 
 Let's also try to use information gain to select the most important variables. In this section I will also use a cross validation procedure to select the best threshold for my model.
 ```{r cross validation information gain, message=FALSE, warning=FALSE}
-source('functions/lm_cross_validation.R')
-source('functions/baseline.R')
-source('functions/information_gain_CV.R')
-
-# using cross validation to find the optimal trashold
-#information_gain_CV(training, validation, test, int_min = 0.01, int_max = 0.05, steps = 0.01)
-
 # applying information gain with the optimal trashold found
-weights<- data.frame(information.gain(price ~ ., training))
+weights<- data.frame(information.gain(formula, training))
 weights$feature <- rownames(weights)
 weights[order(weights$attr_importance, decreasing = TRUE),]
-information_gain_features <- weights$feature[weights$attr_importance > 0.005]
-
-weights<- data.frame(information.gain(price ~ ., data = training[,c(information_gain_features,"price"),with=FALSE]))
+information_gain_features <- weights$feature[weights$attr_importance > information_gain_CV(training, validation,
+                                                                                           int_min = 0.001, 
+                                                                                           int_max = 0.005, 
+                                                                                           steps = 0.01)]
 
 ig_training <- training[,c(information_gain_features,"price"),with=FALSE]
 ig_test <- test[,c(information_gain_features,"price"),with=FALSE]
@@ -335,9 +319,9 @@ train_control_config <- trainControl(method = "repeatedcv",
                                      repeats = 1,
                                      returnResamp = "all")
 
-ridge.mod <- train(price ~ ., data = training, 
+ridge.mod <- train(formula, data = ig_training, 
                method = "glmnet", 
-               metric = "MAPE",
+               metric = "mape",
                trControl=train_control_config,
                tuneGrid = expand.grid(alpha = 0, lambda = lambdas))
 ```
@@ -358,12 +342,12 @@ plot(ridge.mod$finalModel)
 ```
 
 ```{r Ridge Evaluation}
-ridge.mod.pred <- predict(ridge.mod, validation)
+ridge.mod.pred <- predict(ridge.mod, ig_validation)
 ridge.mod.pred[is.na(ridge.mod.pred)] <- 0
 
-my_data <- as.data.frame(cbind(predicted=(exp(ridge.mod.pred) -1), observed=(exp(validation$price) -1)))
-ridge.mod.mape <- sqrt(mean((ridge.mod.pred - validation$price)^2))
-ridge.mod.price_error <- mean(abs((exp(ridge.mod.pred) -1) - (exp(validation$price) -1)))
+my_data <- as.data.frame(cbind(predicted=(exp(ridge.mod.pred) -1), observed=(exp(ig_validation$price) -1)))
+ridge.mod.mape <- mape(ig_validation$price, ridge.mod.pred)
+ridge.mod.price_error <- mean(abs((exp(ridge.mod.pred) -1) - (exp(ig_validation$price) -1)))
 
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
@@ -385,56 +369,20 @@ plot(varImp(ridge.mod), top = 20) # 20 most important features
 ### Lasso Regresion
 
 Now Let's try lasso in combination with information gain. Moreover, I will use cross validation to identify the best number of seed
-```{r Cross Validation Lasso Regression, warning=FALSE}
-# cross validation
-lasso_mape <- c()
-lasso_index <- c()
-
-for (i in seq(20,30,1)){
-  
-lambdas <- 10^seq(-3, 0, by = .05)
-
-set.seed(i)
-train_control_config <- trainControl(method = "repeatedcv", 
-                                     number = 5, 
-                                     repeats = 1,
-                                     returnResamp = "all")
-
-lasso.mod_cv <- train(price ~ ., data = ig_training, 
-               method = "glmnet", 
-               metric = "MAPE",
-               trControl=train_control_config,
-               tuneGrid = expand.grid(alpha = 1, lambda = lambdas))
-
-lasso.mod.pred <- predict(lasso.mod_cv, validation)
-lasso.mod.pred[is.na(lasso.mod.pred)] <- 0
-
-my_data <- as.data.frame(cbind(predicted=(exp(lasso.mod.pred) -1), observed=(exp(validation$price) -1)))
-lasso.mod.mape <- mape(lasso.mod.pred, validation$price)
-
-lasso_mape <- c(lasso_mape, lasso.mod.mape)
-lasso_index <- c(lasso_index, i)
-}
-
-lasso_cross_validation <- data.table(score=lasso_mape, indexes=lasso_index)
-# optimal seed
-lasso_seed <- lasso_cross_validation[score == min(score),][1,indexes]
-
-```
 
 ```{r Lasso Regression, warning=FALSE}
 # applying the lasso regression with the optimal seed value found above.
 lambdas <- 10^seq(-3, 0, by = .05)
 
-set.seed(lasso_seed)
+set.seed(lasso_CV(training, validation,10,60,5))
 train_control_config <- trainControl(method = "repeatedcv", 
                                      number = 5, 
                                      repeats = 1,
                                      returnResamp = "all")
 
-lasso.mod <- train(price ~ ., data = training, 
+lasso.mod <- train(formula, data = training, 
                method = "glmnet", 
-               metric = "MAPE",
+               metric = "mape",
                trControl=train_control_config,
                tuneGrid = expand.grid(alpha = 1, lambda = lambdas))
 
@@ -479,6 +427,102 @@ Rank the variables according to the importance attributed by the model.
 ```{r}
 # Print, plot variable importance
 plot(varImp(lasso.mod), top = 20) # 20 most important features
+```
+
+### Random Forest
+
+```{r Lasso Regression, warning=FALSE}
+rf_0<-ranger(formula=formula, data=training)
+rf.pred<-predict(rf_0, data = validation)$predictions
+
+rf.mape <- mape(rf.pred, validation$price)
+rf.price_error <- mean(abs((exp(rf.pred) -1) - (exp(validation$price) -1)))
+
+ggplot(my_data, aes(predicted, observed)) +
+    geom_point() + geom_smooth(method = "glm") +
+    labs(x="Predicted") +
+    ggtitle(ggtitle(paste("Random Forest", ' MAPE: ', format(round(rf.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(rf.price_error, 0), nsmall=0), 
+                        ' €', sep=''))) +  
+    scale_x_continuous(labels = scales::comma) + 
+    scale_y_continuous(labels = scales::comma)
+```
+
+### XGBoost
+
+```{r Lasso Regression, warning=FALSE}
+xgb_0<-xgboost(booster='gbtree',
+               data=as.matrix(training[, !'price', with=F]),
+               label=training$price,
+               nrounds = 50,
+               objective='reg:linear')
+
+xgb.pred<-predict(xgb_0, newdata = as.matrix(validation[, !'price', with=F]), type='response')
+
+xgb.mape <- mape(xgb.pred, validation$price)
+xgb.price_error <- mean(abs((exp(xgb.pred) -1) - (exp(validation$price) -1)))
+
+ggplot(my_data, aes(predicted, observed)) +
+    geom_point() + geom_smooth(method = "glm") +
+    labs(x="Predicted") +
+    ggtitle(ggtitle(paste("XGBoost", ' MAPE: ', format(round(xgb.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(xgb.price_error, 0), nsmall=0), 
+                        ' €', sep=''))) +  
+    scale_x_continuous(labels = scales::comma) + 
+    scale_y_continuous(labels = scales::comma)
+```
+
+### Regression with StepWise feature selection 
+
+```{r Lasso Regression, warning=FALSE}
+#### 2.1 Regression with StepWise feature selection 
+lm_0<-stepAIC(lm(formula = formula, 
+                 data=training),
+              trace=F)
+
+lm.pred<-predict(lm_0, newdata = validation)
+
+lm.mape <- mape(lm.pred, validation$price)
+lm.price_error <- mean(abs((exp(lm.pred) -1) - (exp(validation$price) -1)))
+
+ggplot(my_data, aes(predicted, observed)) +
+    geom_point() + geom_smooth(method = "glm") +
+    labs(x="Predicted") +
+    ggtitle(ggtitle(paste("StepWise", ' MAPE: ', format(round(lm.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(lm.price_error, 0), nsmall=0), 
+                        ' €', sep=''))) +  
+    scale_x_continuous(labels = scales::comma) + 
+    scale_y_continuous(labels = scales::comma)
+```
+
+### Regression with regularization
+
+```{r Lasso Regression, warning=FALSE}
+glmnet_cv<-cv.glmnet(x = data.matrix(training[, !'price']),
+                     nfolds = 5,
+                     y = training[['price']],
+                     alpha=1,
+                     family = 'gaussian',
+                     standardize = T)
+plot.cv.glmnet(glmnet_cv)
+
+glmnet_cv$lambda.min
+
+glmnet_0<-glmnet(x = data.matrix(training[, !'price']), 
+                 y = training[['price']],
+                 family = 'gaussian',
+                 alpha=1, lambda = glmnet_cv$lambda.min)
+glmnet_0$beta
+
+glmnet.pred <- predict(glmnet_0, newx = as.matrix(training[, !'price']))
+
+glmnet.mape <- mape(glmnet.pred, validation$price)
+glmnetprice_error <- mean(abs((exp(glmnet.pred) -1) - (exp(validation$price) -1)))
+
+ggplot(my_data, aes(predicted, observed)) +
+    geom_point() + geom_smooth(method = "glm") +
+    labs(x="Predicted") +
+    ggtitle(ggtitle(paste("Regression with regularization", ' MAPE: ', format(round(glmnet.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(glmnetprice_error, 0), nsmall=0), 
+                        ' €', sep=''))) +  
+    scale_x_continuous(labels = scales::comma) + 
+    scale_y_continuous(labels = scales::comma)
 ```
 
 # Final Submission
