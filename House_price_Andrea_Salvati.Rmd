@@ -52,7 +52,7 @@ In this section I am going to preform some data cleaning.
 
 The feature `Id` present a unique value, consequently it is not going to offer any advantage for prediction.
 
-```{r Dataset Visualization}
+```{r Data cleaning}
 dataset[, c('id', 'date'):=NULL]
 colnames(dataset)
 ```
@@ -61,10 +61,14 @@ colnames(dataset)
 
 If we go back to the summary of the dataset we can identify some numerical features that are actually categories: What we have to do is to convert them to the proper 'class' or 'type' using the `as.factor` command.
 
-```{r Dataset Visualization}
+```{r Factorize features}
 dataset$condition <- factor(dataset$condition)
 dataset$grade <- factor(dataset$grade)
-dataset$zipcode <- factor(dataset$grade)
+dataset$zipcode <- factor(dataset$zipcode)
+dataset$yr_built <- factor(dataset$yr_built)
+dataset$yr_renovated <- factor(dataset$yr_renovated)
+dataset$view <- factor(dataset$view)
+
 #dataset$date <- as.Date.character(dataset$date, '%m/%d/%Y')
 
 # lets now turn characters into factors
@@ -91,7 +95,7 @@ In this section we seek to identify outliers to then properly deal with them. If
 Here I compare the columns with outliers to the target variable (`price`) to visually check if there are some extreme values and just consider those as outliers.
 
 
-```{r}
+```{r detecting Outliers}
 #Classify all numeric columns
 column_types <- sapply(names(dataset), function(x) {
     class(dataset[[x]])
@@ -100,7 +104,8 @@ column_types <- sapply(names(dataset), function(x) {
 numeric_columns <- names(column_types[column_types != "factor"])
 outliers <- scores(dataset[,numeric_columns, with=FALSE], type="chisq", prob=0.9)
 per_outliers <- sort(((colSums(outliers)/length(dataset$price))*100), decreasing = TRUE)
-col_outliers_to_remove <- names(per_outliers[per_outliers > 5])
+col_outliers_to_remove <- names(per_outliers[per_outliers > 5 & names(per_outliers) != 'lat' 
+                                             & names(per_outliers) != 'long'])
 
 #Plot each variable against Sales Price
 for (i in col_outliers_to_remove){
@@ -108,7 +113,7 @@ for (i in col_outliers_to_remove){
 }
 ```
 
-```{r}
+```{r Clipping Outliers}
 for (i in col_outliers_to_remove){
   qnt <- quantile(dataset[[i]], probs=c(.25, .75))
   caps <- quantile(dataset[[i]], probs=c(.05, .95))
@@ -127,7 +132,7 @@ for (i in col_outliers_to_remove){
 
 We now need to detect skewness in the Target value. Let's see what is the effect of skewness on a variable, and plot it using ggplot. The way of getting rid of the skewness is to use the `log` (or the `log1p`) of the values of that feature, to flatten it. To reduce right skewness, take roots or logarithms or reciprocals (x to 1/x). 
 
-```{r}
+```{r Skewness}
 df <- rbind(data.frame(version="price",x=original_training_data$price),
             data.frame(version="log(price+1)",x=log(original_training_data$price + 1)))
 
@@ -142,7 +147,7 @@ The same "skewness" observed in the target variable also affects other variables
 
 I will set up my threshold for the skewness in 0.75. I place that value in that variable to adjust its value in a single place, in case I have to perform multiple tests.
 
-```{r}
+```{r Skewness threshold}
 skewness_threshold = 1
 ```
 
@@ -152,7 +157,7 @@ To do so, instead of `loops`, we will use the `apply` family of functions. They 
 
 What we want to determine is the class of each column or feature, and to do so, we use the `class` method from R. We will pass the actual column or feature from our dataset (dataframe):
 
-```{r}
+```{r numeric_columns}
 column_types <- sapply(names(dataset), function(x) {
     class(dataset[[x]])
   }
@@ -162,7 +167,7 @@ numeric_columns
 ```
 
 And now, with that information, we need to calculate the skewness of each column whose name is our list of __factor__ (or categorical) features. We use the `sapply` method again, to compute the skewness of each column whose name is in the list of `numeric_columns`.
-```{r}
+```{r skew handling}
 # skew of each variable
 skew <- sapply(numeric_columns, function(x) { 
     e1071::skewness(dataset[[x]], na.rm = T)
@@ -171,7 +176,7 @@ skew <- sapply(numeric_columns, function(x) {
 ```
 
 What we do need to make now is to apply the log to those whose skewness value is below a given threshold that we've set in 0.75. We should test different hypothesis with our threshold too.
-```{r}
+```{r skew transformation}
 # transform all variables above a threshold skewness.
 skew <- skew[abs(skew) > skewness_threshold]
 for(x in names(skew)) {
@@ -188,64 +193,45 @@ In this section I will create some new features to improve the predictive power 
 colnames(dataset)
 ```
 
-```{r}
+```{r Feature Creation}
+# creating a total square feet feature
 dataset$TotalSqFeet <- as.numeric(dataset$sqft_basement + dataset$sqft_above + dataset$sqft_lot + dataset$sqft_living)
-dataset$Remod <- ifelse(dataset$yr_built==dataset$yr_renovated, 0, 1) #0=No Remodeling, 1=Remodeling
+# Creating a Remodrnatoin variable (0 = No Remodeling, 1 = Remodeling)
+dataset$Remod <- ifelse(as.numeric(dataset$yr_built)==as.numeric(dataset$yr_renovated), 0, 1)
+dataset$Remod <- factor(dataset$Remod) 
 ```
 
-```{r}
-# We analyze the counting per zipcode:
-sort(summary(dataset$zipcode), dec=T)/nrow(dataset)
-p<-ggplot(dataset, aes(x=zipcode))+geom_bar(stat='count')+
-  theme(axis.text.x = element_text(angle=45))
-p
-```
 
-```{r}
-# lets re-order the factor levels of make in decreasing order
-dataset[, zipcode:=factor(zipcode, levels=names(sort(summary(dataset$zipcode), dec=T)))]
-levels(dataset$zipcode)
-```
+```{r Others label - grade}
+# We will create a label that will agregate into "others" those grade with less than 3% of share
+niche_grade<-names(which(summary(dataset$grade)/nrow(dataset)<0.03))
+niche_grade
 
-```{r}
-# We will create a label that will agregate into "others" those zipcode with less than 3% of share
-niche_zipcode<-names(which(summary(dataset$zipcode)/nrow(dataset)<0.03))
-niche_zipcode
+dataset[, grade_agg:=as.factor(ifelse(grade%in%niche_grade,'others',as.character(grade)))]
 
-dataset[, zipcode_agg:=as.factor(ifelse(zipcode%in%niche_zipcode,'others',as.character(zipcode)))]
+summary(dataset$grade)/nrow(dataset)
+summary(dataset$grade_agg)/nrow(dataset)
+sum(summary(dataset$grade_agg)/nrow(dataset)) 
 
-summary(dataset$zipcode)/nrow(dataset)
-summary(dataset$zipcode_agg)/nrow(dataset)
-sum(summary(dataset$zipcode_agg)/nrow(dataset)) 
-
-dataset[, length(levels(zipcode_agg))]
-dataset[, length(levels(zipcode))]
-dataset[, length(levels(zipcode_agg))/length(levels(zipcode))-1] # important reduction in factor cathegories
+dataset[, length(levels(grade_agg))]
+dataset[, length(levels(grade))]
+dataset[, length(levels(grade_agg))/length(levels(grade))-1] # important reduction in factor cathegories
 
 
-dataset[, zipcode_agg:=factor(zipcode_agg, levels=names(sort(summary(dataset$zipcode_agg), dec=T)))]
-p<-ggplot(dataset, aes(x=zipcode_agg))+geom_bar(stat='count')+
+dataset[, grade_agg:=factor(grade_agg, levels=names(sort(summary(dataset$grade_agg), dec=T)))]
+p<-ggplot(dataset, aes(x=grade_agg))+geom_bar(stat='count')+
   theme(axis.text.x = element_text(angle=45))
 p
 
-# we drop off the former zipcode variable
-dataset[, zipcode:=NULL]
+# we drop off the former grade variable
+dataset <- dataset[, grade:=NULL]
 ```
 
-
-```{r}
+```{r Categorical summary}
 # Now lets check the number of categories per factor variable
 factor_variables<-names(dataset)[sapply(dataset, is.factor)]
 count_factor_variables<-sapply(dataset[,factor_variables, with=F], summary)
 count_factor_variables
-```
-
-```{r}
-# Now lets check the number of categories per factor variable
-data_ready<-caret::dummyVars(formula= ~., data = dataset, fullRank=T,sep = "_")
-data_ready<-data.table(predict(data_ready, newdata = dataset))
-
-names(data_ready)<-gsub('-','_',names(data_ready))
 ```
 
 # Modelling
@@ -255,8 +241,8 @@ names(data_ready)<-gsub('-','_',names(data_ready))
 To facilitate the data cleaning and feature engineering we merged train and test datasets. We now split them again to create our final model.
 
 ```{r Train test split}
-training_data <- data_ready[which(data_ready$price!=0),]
-test <- data_ready[which(data_ready$price==0),]
+training_data <- dataset[which(dataset$price!=0),]
+test <- dataset[which(dataset$price==0),]
 ```
 
 We are going to split the annotated dataset in training and validation for the later evaluation of our regression models
@@ -341,9 +327,9 @@ plot(ridge.mod$finalModel)
 ridge.mod.pred <- predict(ridge.mod, ig_validation)
 ridge.mod.pred[is.na(ridge.mod.pred)] <- 0
 
-my_data <- as.data.frame(cbind(predicted=(exp(ridge.mod.pred) -1), observed=(exp(ig_validation$price) -1)))
+my_data <- as.data.frame(cbind(predicted=(exp(ridge.mod.pred) -1), observed=(exp(validation$price) -1)))
 ridge.mod.mape <- mape(ig_validation$price, ridge.mod.pred)
-ridge.mod.price_error <- mean(abs((exp(ridge.mod.pred) -1) - (exp(ig_validation$price) -1)))
+ridge.mod.price_error <- mean(abs((exp(ridge.mod.pred) -1) - (exp(validation$price) -1)))
 
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
@@ -376,7 +362,7 @@ train_control_config <- trainControl(method = "repeatedcv",
                                      repeats = 1,
                                      returnResamp = "all")
 
-lasso.mod <- train(formula, data = training, 
+lasso.mod <- train(formula, data = ig_training, 
                method = "glmnet", 
                metric = "mape",
                trControl=train_control_config,
@@ -401,7 +387,7 @@ plot(lasso.mod$finalModel)
 
 ```{r lasso Evaluation}
 # evaluating the model
-lasso.mod.pred <- predict(lasso.mod, validation)
+lasso.mod.pred <- predict(lasso.mod, ig_validation)
 lasso.mod.pred[is.na(lasso.mod.pred)] <- 0
 
 my_data <- as.data.frame(cbind(predicted=(exp(lasso.mod.pred) -1), observed=(exp(validation$price) -1)))
@@ -427,12 +413,14 @@ plot(varImp(lasso.mod), top = 20) # 20 most important features
 
 ### Random Forest
 
-```{r Lasso Regression, warning=FALSE}
-rf_0<-ranger(formula=formula, data=training)
-rf.pred<-predict(rf_0, data = validation)$predictions
+```{r Random Forest, warning=FALSE}
+rf_0<-ranger(formula=formula, data=ig_training)
+rf.pred<-predict(rf_0, data = ig_validation)$predictions
 
 rf.mape <- mape(rf.pred, validation$price)
 rf.price_error <- mean(abs((exp(rf.pred) -1) - (exp(validation$price) -1)))
+
+my_data <- as.data.frame(cbind(predicted=(exp(rf.pred) -1), observed=(exp(validation$price) -1)))
 
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
@@ -445,17 +433,35 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ### XGBoost
 
-```{r Lasso Regression, warning=FALSE}
+```{r XGBoost - Prep, warning=FALSE}
+xgb_ig_training <- caret::dummyVars(formula= ~., data = ig_training, fullRank=T,sep = "_")
+xgb_ig_training <- data.table(predict(xgb_ig_training, newdata = ig_training))
+
+xgb_ig_validation <- caret::dummyVars(formula= ~., data = ig_validation, fullRank=T,sep = "_")
+xgb_ig_validation <- data.table(predict(xgb_ig_validation, newdata = ig_validation))
+
+xgb_ig_test <- caret::dummyVars(formula= ~., data = ig_test, fullRank=T,sep = "_")
+xgb_ig_test <- data.table(predict(xgb_ig_test, newdata = ig_test))
+
+```
+
+```{r XGBoost - model, warning=FALSE}
 xgb_0<-xgboost(booster='gbtree',
-               data=as.matrix(training[, !'price', with=F]),
-               label=training$price,
-               nrounds = 50,
+               data=as.matrix(xgb_ig_training[, !'price', with=F]),
+               label=xgb_ig_training$price,
+               nrounds = 100,
                objective='reg:linear')
 
-xgb.pred<-predict(xgb_0, newdata = as.matrix(validation[, !'price', with=F]), type='response')
+xgb.pred<-predict(xgb_0, newdata = as.matrix(xgb_ig_validation[, !'price', with=F]), type='response')
 
-xgb.mape <- mape(xgb.pred, validation$price)
-xgb.price_error <- mean(abs((exp(xgb.pred) -1) - (exp(validation$price) -1)))
+```
+
+```{r XGBoost - plot, warning=FALSE}
+
+xgb.mape <- mape(xgb.pred, xgb_ig_validation$price)
+xgb.price_error <- mean(abs((exp(xgb.pred) -1) - (exp(xgb_validation$price) -1)))
+
+my_data <- as.data.frame(cbind(predicted=(exp(xgb.pred) -1), observed=(exp(xgb_ig_validation$price) -1)))
 
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
@@ -468,16 +474,26 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ### Regression with StepWise feature selection 
 
-```{r Lasso Regression, warning=FALSE}
+```{r Regression with StepWise feature selection, warning=FALSE}
+lm_ig_training <- ig_training
+lm_ig_training$yr_built <- as.numeric(lm_ig_training$yr_built)
+lm_ig_training$yr_renovated <- as.numeric(lm_ig_training$yr_renovated)
+
+lm_ig_validation <- ig_validation
+lm_ig_validation$yr_built <- as.numeric(lm_ig_validation$yr_built)
+lm_ig_validation$yr_renovated <- as.numeric(lm_ig_validation$yr_renovated)
+
 #### 2.1 Regression with StepWise feature selection 
 lm_0<-stepAIC(lm(formula = formula, 
-                 data=training),
+                 data=lm_ig_training),
               trace=F)
 
-lm.pred<-predict(lm_0, newdata = validation)
+lm.pred<-predict(lm_0, newdata = lm_ig_validation)
 
 lm.mape <- mape(lm.pred, validation$price)
 lm.price_error <- mean(abs((exp(lm.pred) -1) - (exp(validation$price) -1)))
+
+my_data <- as.data.frame(cbind(predicted=(exp(lm.pred) -1), observed=(exp(validation$price) -1)))
 
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
@@ -490,7 +506,7 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ### Regression with regularization
 
-```{r Lasso Regression, warning=FALSE}
+```{r Regression with regularization, warning=FALSE}
 glmnet_cv<-cv.glmnet(x = data.matrix(training[, !'price']),
                      nfolds = 5,
                      y = training[['price']],
@@ -511,6 +527,8 @@ glmnet.pred <- predict(glmnet_0, newx = as.matrix(training[, !'price']))
 
 glmnet.mape <- mape(glmnet.pred, validation$price)
 glmnetprice_error <- mean(abs((exp(glmnet.pred) -1) - (exp(validation$price) -1)))
+
+my_data <- as.data.frame(cbind(predicted=(exp(glmnet.pred) -1), observed=(exp(validation$price) -1)))
 
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
@@ -533,7 +551,7 @@ In order to do my prediction I have tried all the combination of the models expl
 final.model <- xgb_0
 
 # Predict the prices for the test data (i.e., we use the exp function to revert the log transformation that we applied to the target variable)
-final.pred <- as.numeric(exp(predict(final.model, as.matrix(test[, !'price', with=F]), type='response'))-1)
+final.pred <- as.numeric(exp(predict(final.model, as.matrix(xgb_test[, !'price', with=F]), type='response'))-1)
 final.pred[is.na(final.pred)]
 hist(final.pred, main="Histogram of Predictions", xlab = "Predictions")
 
