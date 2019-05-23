@@ -528,7 +528,7 @@ rmseErrorsHyperparameters <- apply(searchGridSubCol, 1, function(parameterList){
   output <- return(c(rmse, trmse, currentSubsampleRate, currentColsampleRate, currentDepth, currentEta, currentMinChild))}))
 ```
 
-```{r XGBoost Opt - plot, warning=FALSE}
+```{r XGBoost Opt - params selection, warning=FALSE}
 # finding the best combination of hyperparameters
 output <- as.data.table(t(rmseErrorsHyperparameters))
 varnames <- c("TestRMSE", "TrainRMSE", "SubSampRate", "ColSampRate", "Depth", "eta", "gamma")
@@ -538,7 +538,7 @@ optmimized_param <- output[TestRMSE == min(TestRMSE),3:7]
 
 Now we will define the model with the best hyperparameters.
 
-```{r XGBoost Opt - model, warning=FALSE}
+```{r XGBoost Opt - final model, warning=FALSE}
 # Defining the model 
 xgb_opt<-xgboost(booster='gbtree',
                data=xgb_ig_training,
@@ -626,7 +626,6 @@ glmnet_0<-glmnet(x = xgb_ig_training,
                  y = training[['price']],
                  family = 'gaussian',
                  alpha=1, lambda = glmnet_cv$lambda.min)
-glmnet_0$beta
 glmnet.pred <- predict(glmnet_0, newx = xgb_ig_validation)
 
 # Evaluation
