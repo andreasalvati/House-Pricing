@@ -50,7 +50,7 @@ summary(dataset)
 
 In this section I am going to preform some data cleaning.
 
-The feature `Id` present a unique value, consequently it is not going to offer any advantage for prediction.
+The feature `Id` and `deta` are not going to offer any advantage for prediction.
 
 ```{r Data cleaning}
 dataset[, c('id', 'date'):=NULL]
@@ -88,32 +88,31 @@ paste('There are', length(na.cols), 'columns with missing values')
 
 ## Outliers
 
-We will now focus on numerical values. If `NAs` where the natural enemy of categorical values, the main problem with numerical values are outliers (values which largely differ from the rest). Outliers can mislead the training of our models resulting in less accurate models and ultimately worse results.
-
-In this section we seek to identify outliers to then properly deal with them. If we summarize the dataset, we can see variables which "Max." is much larger than the rest of values. These features are susceptible of containing outliers.
-
-Here I compare the columns with outliers to the target variable (`price`) to visually check if there are some extreme values and just consider those as outliers.
+We will now focus on numerical values. In this section I will detect numerical features which present outliers and I will clip those values.
 
 
 ```{r detecting Outliers}
-#Classify all numeric columns
+# Classify all numeric columns
 column_types <- sapply(names(dataset), function(x) {
     class(dataset[[x]])
   }
 )
 numeric_columns <- names(column_types[column_types != "factor"])
+
+# Identify the the feature with outliers
 outliers <- scores(dataset[,numeric_columns, with=FALSE], type="chisq", prob=0.9)
 per_outliers <- sort(((colSums(outliers)/length(dataset$price))*100), decreasing = TRUE)
 col_outliers_to_remove <- names(per_outliers[per_outliers > 5 & names(per_outliers) != 'lat' 
                                              & names(per_outliers) != 'long'])
 
-#Plot each variable against Sales Price
+# Plot the boxplots of the selected variables
 for (i in col_outliers_to_remove){
   boxplot(dataset[,i, with=FALSE], type="p", xlab=i)
 }
 ```
 
 ```{r Clipping Outliers}
+# clipping the outliers
 for (i in col_outliers_to_remove){
   qnt <- quantile(dataset[[i]], probs=c(.25, .75))
   caps <- quantile(dataset[[i]], probs=c(.05, .95))
@@ -122,7 +121,7 @@ for (i in col_outliers_to_remove){
   dataset[[i]][dataset[[i]] > (qnt[2] + H)] <- caps[2]
 }
 
-#Plot each variable against Sales Price
+# Plot again the box plots to verify if the procedure has been succesful
 for (i in col_outliers_to_remove){
   boxplot(dataset[,i, with=FALSE], type="p", xlab=i)
 }
@@ -130,9 +129,10 @@ for (i in col_outliers_to_remove){
 
 ## Skewness
 
-We now need to detect skewness in the Target value. Let's see what is the effect of skewness on a variable, and plot it using ggplot. The way of getting rid of the skewness is to use the `log` (or the `log1p`) of the values of that feature, to flatten it. To reduce right skewness, take roots or logarithms or reciprocals (x to 1/x). 
+We now need to detect skewness in the Target value. Let's see what is the effect of skewness on a variable, and plot it using ggplot. The way of getting rid of the skewness is to use the `log` of the values of that feature, to flatten it.
 
 ```{r Skewness}
+# plot the skewness of the target variable
 df <- rbind(data.frame(version="price",x=original_training_data$price),
             data.frame(version="log(price+1)",x=log(original_training_data$price + 1)))
 
@@ -145,17 +145,12 @@ We therefore transform the target value applying log
 
 The same "skewness" observed in the target variable also affects other variables. To facilitate the application of the regression model we are going to also eliminate this skewness. For numeric feature with excessive skewness, perform log transformation
 
-I will set up my threshold for the skewness in 0.75. I place that value in that variable to adjust its value in a single place, in case I have to perform multiple tests.
-
 ```{r Skewness threshold}
+# setting up a threshold to decide to which numeric feature apply the log transformation
 skewness_threshold = 1
 ```
 
-Now, let's compute the skewness of each feature that is not 'factor' nor 'character'. So, I'm only interested in continuous values. One possible way of doing it is the following: First, lets determine what is the 'class' or data type of each of my features.
-
-To do so, instead of `loops`, we will use the `apply` family of functions. They will __apply__ a method to each **row** or **column** of your dataset. It will depend on what to do specify as the first argument of the method. 
-
-What we want to determine is the class of each column or feature, and to do so, we use the `class` method from R. We will pass the actual column or feature from our dataset (dataframe):
+Now, let's compute the skewness of each feature that is not 'factor' nor 'character'. 
 
 ```{r numeric_columns}
 column_types <- sapply(names(dataset), function(x) {
@@ -166,7 +161,7 @@ numeric_columns <- names(column_types[column_types != "factor"])
 numeric_columns
 ```
 
-And now, with that information, we need to calculate the skewness of each column whose name is our list of __factor__ (or categorical) features. We use the `sapply` method again, to compute the skewness of each column whose name is in the list of `numeric_columns`.
+And now, with that information, we need to calculate the skewness of each column whose name is our list of __factor__ (or categorical) features.
 ```{r skew handling}
 # skew of each variable
 skew <- sapply(numeric_columns, function(x) { 
@@ -175,7 +170,7 @@ skew <- sapply(numeric_columns, function(x) {
 )
 ```
 
-What we do need to make now is to apply the log to those whose skewness value is below a given threshold that we've set in 0.75. We should test different hypothesis with our threshold too.
+What we do need to make now is to apply the log to those whose skewness value is below a given threshold that we've set in 1.
 ```{r skew transformation}
 # transform all variables above a threshold skewness.
 skew <- skew[abs(skew) > skewness_threshold]
@@ -253,10 +248,8 @@ validation <- splits$testset
 ```
 
 ## Feature Selection
-We here start the Feature Selection.
 
-### Filtering Methods
-We will rank the features according to their predictive power according to the methodologies seen in class: the Chi Squared Independence test and the Information Gain.
+We here start the Feature Selection.
 
 #### Full Model
 
@@ -270,15 +263,16 @@ lm.model(training, validation, "Baseline")
 
 #### Information Gain Selection
 
-Let's also try to use information gain to select the most important variables. In this section I will also use a cross validation procedure to select the best threshold for my model.
+Let's try to use information gain to select the most important variables. In this section I will also use a cross validation procedure to select the best threshold for my model. As it is possible to notice the results are better than the baseline so from now on I will use the ig_training for all the models.
+
 ```{r cross validation information gain, message=FALSE, warning=FALSE}
 # applying information gain with the optimal trashold found
 weights<- data.frame(information.gain(formula, training))
 weights$feature <- rownames(weights)
 weights[order(weights$attr_importance, decreasing = TRUE),]
 information_gain_features <- weights$feature[weights$attr_importance > information_gain_CV(training, validation,
-                                                                                           int_min = 0.001, 
-                                                                                           int_max = 0.005, 
+                                                                                           int_min = 0.002, 
+                                                                                           int_max = 0.006, 
                                                                                            steps = 0.01)]
 
 ig_training <- training[,c(information_gain_features,"price"),with=FALSE]
@@ -289,7 +283,7 @@ lm.model(ig_training, ig_validation, "Information Gain")
 ```
 
 
-#### Ridge Regression
+### Ridge Regression
 
 Let's try the Ridge Regression
 ```{r Ridge Regression, warning=FALSE}
@@ -303,12 +297,10 @@ train_control_config <- trainControl(method = "repeatedcv",
 
 ridge.mod <- train(formula, data = ig_training, 
                method = "glmnet", 
-               metric = "mape",
+               metric = "RMSE",
                trControl=train_control_config,
                tuneGrid = expand.grid(alpha = 0, lambda = lambdas))
 ```
-
-##### Evaluation
 
 Plotting the RMSE for the different lambda values, we can see the impact of this parameter in the model performance.
 Small values seem to work better for this dataset.
@@ -324,6 +316,7 @@ plot(ridge.mod$finalModel)
 ```
 
 ```{r Ridge Evaluation}
+# evaluating the model 
 ridge.mod.pred <- predict(ridge.mod, ig_validation)
 ridge.mod.pred[is.na(ridge.mod.pred)] <- 0
 
@@ -331,6 +324,7 @@ my_data <- as.data.frame(cbind(predicted=(exp(ridge.mod.pred) -1), observed=(exp
 ridge.mod.mape <- mape(ig_validation$price, ridge.mod.pred)
 ridge.mod.price_error <- mean(abs((exp(ridge.mod.pred) -1) - (exp(validation$price) -1)))
 
+# plottong the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -356,7 +350,7 @@ Now Let's try lasso in combination with information gain. Moreover, I will use c
 # applying the lasso regression with the optimal seed value found above.
 lambdas <- 10^seq(-3, 0, by = .05)
 
-set.seed(lasso_CV(training, validation,10,60,5))
+set.seed(lasso_CV(training, validation,10,60,10))
 train_control_config <- trainControl(method = "repeatedcv", 
                                      number = 5, 
                                      repeats = 1,
@@ -364,13 +358,12 @@ train_control_config <- trainControl(method = "repeatedcv",
 
 lasso.mod <- train(formula, data = ig_training, 
                method = "glmnet", 
-               metric = "mape",
+               metric = "RMSE",
                trControl=train_control_config,
                tuneGrid = expand.grid(alpha = 1, lambda = lambdas))
 
 ```
 
-#### Evaluation
 
 Plotting the RMSE for the different lambda values, we can see the impact of this parameter in the model performance.
 Small values seem to work better for this dataset.
@@ -394,6 +387,7 @@ my_data <- as.data.frame(cbind(predicted=(exp(lasso.mod.pred) -1), observed=(exp
 lasso.mod.mape <- mape(lasso.mod.pred, validation$price)
 lasso.mod.price_error <- mean(abs((exp(lasso.mod.pred) -1) - (exp(validation$price) -1)))
 
+# plotting the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -413,15 +407,19 @@ plot(varImp(lasso.mod), top = 20) # 20 most important features
 
 ### Random Forest
 
+Now Let's try Random Forest. After running all the models with the the defoult params, XGB was the best performing. For this reason I will apply the Hyper-parameters tuning just for xgb. 
+
 ```{r Random Forest, warning=FALSE}
+# defining the model
 rf_0<-ranger(formula=formula, data=ig_training)
 rf.pred<-predict(rf_0, data = ig_validation)$predictions
 
+# evaluation
 rf.mape <- mape(rf.pred, validation$price)
 rf.price_error <- mean(abs((exp(rf.pred) -1) - (exp(validation$price) -1)))
-
 my_data <- as.data.frame(cbind(predicted=(exp(rf.pred) -1), observed=(exp(validation$price) -1)))
 
+# plotting the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -433,36 +431,137 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ### XGBoost
 
+In this section we'll use xgb. First, we have to transform the data to allow xgb to work. We need to create dummies and to cast the data into a matrix
+
 ```{r XGBoost - Prep, warning=FALSE}
 xgb_ig_training <- caret::dummyVars(formula= ~., data = ig_training, fullRank=T,sep = "_")
 xgb_ig_training <- data.table(predict(xgb_ig_training, newdata = ig_training))
+xgb_ig_training <- as.matrix(xgb_ig_training[, !'price', with=F])
 
 xgb_ig_validation <- caret::dummyVars(formula= ~., data = ig_validation, fullRank=T,sep = "_")
 xgb_ig_validation <- data.table(predict(xgb_ig_validation, newdata = ig_validation))
+xgb_ig_validation <- as.matrix(xgb_ig_validation[, !'price', with=F])
 
 xgb_ig_test <- caret::dummyVars(formula= ~., data = ig_test, fullRank=T,sep = "_")
 xgb_ig_test <- data.table(predict(xgb_ig_test, newdata = ig_test))
+xgb_ig_test <- as.matrix(xgb_ig_test[, !'price', with=F])
 
 ```
 
+Now let's define our first model using all the default params
+
 ```{r XGBoost - model, warning=FALSE}
+# defining the model
 xgb_0<-xgboost(booster='gbtree',
-               data=as.matrix(xgb_ig_training[, !'price', with=F]),
-               label=xgb_ig_training$price,
+               data=xgb_ig_training,
+               label= training$price,
                nrounds = 100,
                objective='reg:linear')
 
-xgb.pred<-predict(xgb_0, newdata = as.matrix(xgb_ig_validation[, !'price', with=F]), type='response')
+xgb.pred<-predict(xgb_0, newdata = xgb_ig_validation, type='response')
 
 ```
 
 ```{r XGBoost - plot, warning=FALSE}
+# evaluation
+xgb.mape <- mape(xgb.pred, validation$price)
+xgb.price_error <- mean(abs((exp(xgb.pred) -1) - (exp(validation$price) -1)))
+my_data <- as.data.frame(cbind(predicted=(exp(xgb.pred) -1), observed=(exp(validation$price) -1)))
 
-xgb.mape <- mape(xgb.pred, xgb_ig_validation$price)
-xgb.price_error <- mean(abs((exp(xgb.pred) -1) - (exp(xgb_validation$price) -1)))
+# Plotting the results
+ggplot(my_data, aes(predicted, observed)) +
+    geom_point() + geom_smooth(method = "glm") +
+    labs(x="Predicted") +
+    ggtitle(ggtitle(paste("XGBoost", ' MAPE: ', format(round(xgb.mape, 4), nsmall=4), ' --> Price ERROR:', format(round(xgb.price_error, 0), nsmall=0), 
+                        ' €', sep=''))) +  
+    scale_x_continuous(labels = scales::comma) + 
+    scale_y_continuous(labels = scales::comma)
+```
 
-my_data <- as.data.frame(cbind(predicted=(exp(xgb.pred) -1), observed=(exp(xgb_ig_validation$price) -1)))
+### XGB Optimized
 
+To have a better performance I will use grid-search to find the optimal value of the function's hyperparameters.
+
+```{r XGBoost Opt , warning=FALSE}
+searchGridSubCol <- expand.grid(subsample = c(0.7, 1), 
+                                colsample_bytree = c(0.5, 1),
+                                max_depth = c(6, 9),
+                                min_child = seq(1), 
+                                eta = c(0.1, 0.5),
+                                gamma = c(0,1)
+)
+
+ntrees <- 100
+
+system.time(
+rmseErrorsHyperparameters <- apply(searchGridSubCol, 1, function(parameterList){
+  
+  #Extract Parameters to test
+  currentSubsampleRate <- parameterList[["subsample"]]
+  currentColsampleRate <- parameterList[["colsample_bytree"]]
+  currentDepth <- parameterList[["max_depth"]]
+  currentEta <- parameterList[["eta"]]
+  currentMinChild <- parameterList[["min_child"]]
+  currentgamma <- parameterList[["gamma"]]
+  xgboostModelCV <- xgb.cv(data =  xgb_ig_training, 
+                           label = training$price, 
+                           nrounds = ntrees, 
+                           nfold = 5, 
+                           showsd = TRUE, 
+                           metrics = "rmse", 
+                           verbose = TRUE, 
+                           "eval_metric" = "rmse",
+                           "objective" = "reg:linear", 
+                           "max.depth" = currentDepth,
+                           "eta" = currentEta, 
+                           "gamma" = currentgamma,
+                           "subsample" = currentSubsampleRate, 
+                           "colsample_bytree" = currentColsampleRate, 
+                           print_every_n = 10, 
+                           "min_child_weight" = currentMinChild, 
+                           booster = "gbtree",
+                           early_stopping_rounds = 10)
+  
+  xvalidationScores <- as.data.frame(xgboostModelCV$evaluation_log)
+  rmse <- tail(xvalidationScores$test_rmse_mean, 1)
+  trmse <- tail(xvalidationScores$train_rmse_mean,1)
+  output <- return(c(rmse, trmse, currentSubsampleRate, currentColsampleRate, currentDepth, currentEta, currentMinChild))}))
+```
+
+```{r XGBoost Opt - plot, warning=FALSE}
+# finding the best combination of hyperparameters
+output <- as.data.table(t(rmseErrorsHyperparameters))
+varnames <- c("TestRMSE", "TrainRMSE", "SubSampRate", "ColSampRate", "Depth", "eta", "gamma")
+names(output) <- varnames
+optmimized_param <- output[TestRMSE == min(TestRMSE),3:7]
+```
+
+Now we will define the model with the best hyperparameters.
+
+```{r XGBoost Opt - model, warning=FALSE}
+# Defining the model 
+xgb_opt<-xgboost(booster='gbtree',
+               data=xgb_ig_training,
+               label= training$price,
+               nrounds = ntrees,
+               max.depth = optmimized_param[,'Depth'],
+               eta = optmimized_param[,'eta'],
+               subsample = optmimized_param[,'SubSampRate'],
+               colsample_bytree = optmimized_param[,'ColSampRate'],
+               min_child_weight = 1,
+               objective='reg:linear')
+
+xgb.pred.opt<-predict(xgb_opt, newdata = xgb_ig_validation, type='response')
+```
+
+
+```{r XGBoost Opt - plot, warning=FALSE}
+# evaluation
+xgb.mape <- mape(xgb.pred.opt, validation$price)
+xgb.price_error <- mean(abs((exp(xgb.pred.opt) -1) - (exp(validation$price) -1)))
+my_data <- as.data.frame(cbind(predicted=(exp(xgb.pred.opt) -1), observed=(exp(validation$price) -1)))
+
+# plotting the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -474,7 +573,10 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ### Regression with StepWise feature selection 
 
+In this secion we'll try to apply Regression with StepWise feature selection. 
+
 ```{r Regression with StepWise feature selection, warning=FALSE}
+# adapting the dataset to work for the algorithm
 lm_ig_training <- ig_training
 lm_ig_training$yr_built <- as.numeric(lm_ig_training$yr_built)
 lm_ig_training$yr_renovated <- as.numeric(lm_ig_training$yr_renovated)
@@ -483,18 +585,19 @@ lm_ig_validation <- ig_validation
 lm_ig_validation$yr_built <- as.numeric(lm_ig_validation$yr_built)
 lm_ig_validation$yr_renovated <- as.numeric(lm_ig_validation$yr_renovated)
 
-#### 2.1 Regression with StepWise feature selection 
+#### Regression with StepWise feature selection 
 lm_0<-stepAIC(lm(formula = formula, 
                  data=lm_ig_training),
               trace=F)
 
 lm.pred<-predict(lm_0, newdata = lm_ig_validation)
 
+# evaluation
 lm.mape <- mape(lm.pred, validation$price)
 lm.price_error <- mean(abs((exp(lm.pred) -1) - (exp(validation$price) -1)))
-
 my_data <- as.data.frame(cbind(predicted=(exp(lm.pred) -1), observed=(exp(validation$price) -1)))
 
+# plotting the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -506,7 +609,10 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ### Regression with regularization
 
+in this section wel'll try to apply Regression with regularization
+
 ```{r Regression with regularization, warning=FALSE}
+# Defining the model
 glmnet_cv<-cv.glmnet(x = data.matrix(training[, !'price']),
                      nfolds = 5,
                      y = training[['price']],
@@ -514,7 +620,6 @@ glmnet_cv<-cv.glmnet(x = data.matrix(training[, !'price']),
                      family = 'gaussian',
                      standardize = T)
 plot.cv.glmnet(glmnet_cv)
-
 glmnet_cv$lambda.min
 
 glmnet_0<-glmnet(x = data.matrix(training[, !'price']), 
@@ -522,14 +627,14 @@ glmnet_0<-glmnet(x = data.matrix(training[, !'price']),
                  family = 'gaussian',
                  alpha=1, lambda = glmnet_cv$lambda.min)
 glmnet_0$beta
-
 glmnet.pred <- predict(glmnet_0, newx = as.matrix(training[, !'price']))
 
+# Evaluation
 glmnet.mape <- mape(glmnet.pred, validation$price)
 glmnetprice_error <- mean(abs((exp(glmnet.pred) -1) - (exp(validation$price) -1)))
-
 my_data <- as.data.frame(cbind(predicted=(exp(glmnet.pred) -1), observed=(exp(validation$price) -1)))
 
+# Plotting the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -544,19 +649,19 @@ We splitted the original training data into train and validation to evaluate the
 
 In addition, we also applied a log transformation to the target variable, to revert this transformation you have to use the exp function.
 
-In order to do my prediction I have tried all the combination of the models explained above. The best model is the lasso regression combined with information gain.
+In order to do my prediction I have tried all the combination of the models explained above. The best model is the optimized xgb.
 
 ```{r Final Submission}
 # Train the model using all the data
-final.model <- xgb_0
+final.model <- xgb_opt
 
 # Predict the prices for the test data (i.e., we use the exp function to revert the log transformation that we applied to the target variable)
-final.pred <- as.numeric(exp(predict(final.model, as.matrix(xgb_test[, !'price', with=F]), type='response'))-1)
+final.pred <- as.numeric(exp(predict(final.model, xgb_ig_test, type='response'))-1)
 final.pred[is.na(final.pred)]
 hist(final.pred, main="Histogram of Predictions", xlab = "Predictions")
 
-lasso_submission <- data.frame(Id = original_test_data$id, price= (final.pred))
-colnames(lasso_submission) <-c("Id", "SalePrice")
-write.csv(lasso_submission, file = "submission1.csv", row.names = FALSE) 
+xgb_submission <- data.frame(Id = original_test_data$id, price= (final.pred))
+colnames(xgb_submission) <-c("Id", "price")
+write.csv(xgb_submission, file = "submission1.csv", row.names = FALSE) 
 
 ```
