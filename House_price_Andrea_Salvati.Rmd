@@ -1,10 +1,13 @@
 ---
 title: "Individual Assignment - Advanced R"
-output: 
+author: "Andrea Salvati"
+output:
   html_document:
-    toc: true
+    toc: yes
     toc_depth: 3
-author: Andrea Salvati
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
 ---
 
 ```{r setup, include=FALSE}
@@ -36,16 +39,15 @@ original_training_data = read.csv(file = file.path("dataset/house_price_train.cs
 original_test_data = read.csv(file = file.path("dataset/house_price_test.csv"))
 ```
 
-To avoid applying the Feature Engineering process two times (once for training and once for test), I will join both datasets (using the `rbind` function), apply the FE and then split the datasets again. However, if I try to do join the two dataframes as they are, we will get an error because they do not have the same columns: `test_data` does not have a column `price`. Therefore, I first create this column in the test set and then we join the data
+To avoid applying the Feature Engineering process twice (once for training and once for test), I will join both datasets, apply the FE and then split the datasets again. However, if I try to do join the two dataframes as they are, we will get an error because they do not have the same columns: `test_data` does not have a column `price`. Therefore, I first create this column in the test set and then we join the data
 
 ```{r Joinning datasets}
 original_test_data$price <- 0
 dataset <- as.data.table(rbind(original_training_data, original_test_data))
-class(dataset)
 ```
 
 Let's now visualize the dataset to see where to begin
-```{r Dataset Visualization}
+```{r Dataset Visualization, echo=FALSE}
 summary(dataset)
 ```
 
@@ -55,16 +57,16 @@ In this section I am going to preform some data cleaning.
 
 The feature `Id` and `date` are not going to offer any advantage for prediction.
 
-```{r Data cleaning}
+```{r Data cleaning ,include=FALSE}
 dataset[, c('id', 'date'):=NULL]
 colnames(dataset)
 ```
 
 ## Factorize features
 
-If we go back to the summary of the dataset we can identify some numerical features that are actually categories: What we have to do is to convert them to the proper 'class' or 'type' using the `as.factor` command.
+If we go back to the summary of the dataset we can identify some numerical features that are actually categories: What we have to do is to convert them to the proper 'class' or 'type'.
 
-```{r Factorize features}
+```{r Factorize features, warning=FALSE}
 dataset$condition <- factor(dataset$condition)
 dataset$grade <- factor(dataset$grade)
 dataset$zipcode <- factor(dataset$zipcode)
@@ -92,7 +94,7 @@ paste('There are', length(na.cols), 'columns with missing values')
 We will now focus on numerical values. In this section I will detect numerical features which present outliers and I will clip those values.
 
 
-```{r detecting Outliers}
+```{r detecting Outliers, echo=FALSE}
 # Classify all numeric columns
 column_types <- sapply(names(dataset), function(x) {
     class(dataset[[x]])
@@ -130,9 +132,9 @@ for (i in col_outliers_to_remove){
 
 ## Skewness
 
-We now need to detect skewness in the Target value. Let's see what is the effect of skewness on a variable, and plot it using ggplot. The way of getting rid of the skewness is to use the `log` of the values of that feature, to flatten it.
+We now need to detect skewness in the Target value. Let's see what is the effect of skewness on a variable, and plot it using ggplot. In order to get rid of the skewness I will use the `log` of the values of that feature, to flatten it.
 
-```{r Skewness}
+```{r Skewness, echo=FALSE}
 # plot the skewness of the target variable
 df <- rbind(data.frame(version="price",x=original_training_data$price),
             data.frame(version="log(price+1)",x=log(original_training_data$price + 1)))
@@ -146,12 +148,12 @@ We therefore transform the target value applying log
 
 The same "skewness" observed in the target variable also affects other variables. To facilitate the application of the regression model we are going to also eliminate this skewness. For numeric feature with excessive skewness, perform log transformation
 
-```{r Skewness threshold}
+```{r Skewness threshold, include=FALSE}
 # setting up a threshold to decide to which numeric feature apply the log transformation
 skewness_threshold = 1
 ```
 
-Now, let's compute the skewness of each feature that is not 'factor' nor 'character'. 
+Now, let's compute the skewness of each feature that is not 'factor' nor 'character'. NB: I will not include lat and long.
 
 ```{r numeric_columns}
 column_types <- sapply(names(dataset), function(x) {
@@ -162,7 +164,8 @@ numeric_columns <- names(column_types[column_types != "factor"])
 numeric_columns <- numeric_columns[numeric_columns != 'lat' & numeric_columns != 'long']
 ```
 
-And now, with that information, we need to calculate the skewness of each column whose name is our list of __factor__ (or categorical) features.
+At this point, we need to calculate the skewness of each numerical column.
+
 ```{r skew handling}
 # skew of each variable
 skew <- sapply(numeric_columns, function(x) { 
@@ -171,7 +174,8 @@ skew <- sapply(numeric_columns, function(x) {
 )
 ```
 
-What we do need to make now is to apply the log to those whose skewness value is below a given threshold that we've set in 1.
+To reduce the skewness in the entire dataset it is possible to apply the log for those column with a skewness value greater than a given threshold that we've set in 1.
+
 ```{r skew transformation}
 # transform all variables above a threshold skewness.
 skew <- skew[abs(skew) > skewness_threshold]
@@ -205,11 +209,9 @@ dataset$distance <- distGeo(as.matrix(dataset[,c('long','lat')]), c(0,0))
 ```
 
 
-```{r Others label - grade}
+```{r Others label - grade, results="hide"}
 # We will create a label that will agregate into "others" those grade with less than 3% of share
 niche_grade<-names(which(summary(dataset$grade)/nrow(dataset)<0.01))
-niche_grade
-
 dataset[, grade_agg:=as.factor(ifelse(grade%in%niche_grade,'others',as.character(grade)))]
 
 summary(dataset$grade)/nrow(dataset)
@@ -219,15 +221,15 @@ sum(summary(dataset$grade_agg)/nrow(dataset))
 dataset[, length(levels(grade_agg))]
 dataset[, length(levels(grade))]
 dataset[, length(levels(grade_agg))/length(levels(grade))-1] # important reduction in factor cathegories
-
-
 dataset[, grade_agg:=factor(grade_agg, levels=names(sort(summary(dataset$grade_agg), dec=T)))]
-p<-ggplot(dataset, aes(x=grade_agg))+geom_bar(stat='count')+
-  theme(axis.text.x = element_text(angle=45))
-p
 
 # we drop off the former grade variable
 dataset <- dataset[, grade:=NULL]
+```
+
+```{r Others label - plot}
+# let's see the median price per ZipCode and Bin the ZipCode in 3 chategory of price
+summary(dataset[price!= 0, price])
 ```
 
 ```{r zipcode - price distribtion}
@@ -235,7 +237,7 @@ dataset <- dataset[, grade:=NULL]
 summary(dataset[price!= 0, price])
 ```
 
-```{r zipcode - summary}
+```{r zipcode - summary, include=FALSE}
 dataset[price != 0 ,list(price=median(price)), by = zipcode][order(price)]
 ```
 ```{r zipcode - plot}
@@ -243,23 +245,19 @@ plot(dataset[price != 0 ,list(price=median(price)), by = zipcode], type="p")
 ```
 
 ```{r zipcode - classification}
+# Defining the 3 bins for zipcode
 zip_price <- dataset[price != 0 ,list(price=median(price)), by = zipcode]
 cheep_zip <- zip_price[price < 12.5, zipcode]
 medium_zip <- zip_price[price >= 12.5 & price < 13.5, zipcode]
 exp_zip <- zip_price[price >= 13.5, zipcode]
 
+# Applyng the bins
 dataset$NeighBin[dataset$zipcode %in% exp_zip] <- 3
 dataset$NeighBin[dataset$zipcode %in% medium_zip] <- 2
 dataset$NeighBin[dataset$zipcode %in% cheep_zip] <- 1
 
+# Factorizing the new feature
 dataset$NeighBin <- factor(dataset$NeighBin)
-```
-
-```{r Categorical summary}
-# Now lets check the number of categories per factor variable
-factor_variables<-names(dataset)[sapply(dataset, is.factor)]
-count_factor_variables<-sapply(dataset[,factor_variables, with=F], summary)
-count_factor_variables
 ```
 
 # Modelling
@@ -280,11 +278,7 @@ training <- splits$trainset
 validation <- splits$testset
 ```
 
-## Feature Selection
-
-We here start the Feature Selection.
-
-#### Full Model
+## Baseline
 
 Let's try first a baseline including all the features to evaluate the impact of the feature engineering.
 
@@ -293,8 +287,7 @@ lm.model(training, validation, "Baseline")
 ```
 
 
-
-#### Information Gain Selection
+## Information Gain Selection
 
 Let's try to use information gain to select the most important variables. In this section I will also use a cross validation procedure to select the best threshold for my model. As it is possible to notice the results are better than the baseline so from now on I will use the ig_training for all the models.
 
@@ -316,7 +309,7 @@ lm.model(ig_training, ig_validation, "Information Gain")
 ```
 
 
-### Ridge Regression
+## Ridge Regression
 
 Let's try the Ridge Regression
 ```{r Ridge Regression, warning=FALSE}
@@ -342,7 +335,7 @@ Small values seem to work better for this dataset.
 plot(ridge.mod)
 ```
 
-Plotting the coefficients for different lambda values. As expected the larger the lambda (lower Norm) value the smaller the coefficients of the features. However, as we can see at the top of the features, there is no feature selection; i.e., the model always consider the 225 parameters.
+Plotting the coefficients for different lambda values. As expected the larger the lambda (lower Norm) value the smaller the coefficients of the features. However, as we can see at the top of the features, there is no feature selection; i.e., the model always consider the 277 parameters.
 
 ```{r Ridge Coefficients}
 plot(ridge.mod$finalModel)
@@ -368,14 +361,13 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ```
 
-
 Rank the variables according to the importance attributed by the model.
 ```{r}
 # Print, plot variable importance
 plot(varImp(ridge.mod), top = 20) # 20 most important features
 ```
 
-### Lasso Regresion
+## Lasso Regresion
 
 Now Let's try lasso in combination with information gain. Moreover, I will use cross validation to identify the best number of seed
 
@@ -383,7 +375,7 @@ Now Let's try lasso in combination with information gain. Moreover, I will use c
 # applying the lasso regression with the optimal seed value found above.
 lambdas <- 10^seq(-3, 0, by = .05)
 
-set.seed(lasso_CV(training, validation,10,60,10))
+set.seed(lasso_CV(training, validation,20,60,10))
 train_control_config <- trainControl(method = "repeatedcv", 
                                      number = 5, 
                                      repeats = 1,
@@ -405,7 +397,7 @@ Small values seem to work better for this dataset.
 plot(lasso.mod)
 ```
 
-Plotting the coefficients for different lambda values. As expected the larger the lambda (lower Norm) value the smaller the coefficients of the features. However, as we can see at the top of the features, there is no feature selection; i.e., the model always consider the 225 parameters.
+Plotting the coefficients for different lambda values.
 
 ```{r lasso Coefficients}
 plot(lasso.mod$finalModel)
@@ -431,14 +423,13 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ```
 
-
 Rank the variables according to the importance attributed by the model.
 ```{r}
 # Print, plot variable importance
 plot(varImp(lasso.mod), top = 20) # 20 most important features
 ```
 
-### Random Forest
+## Random Forest
 
 Now Let's try Random Forest. After running all the models with the the defoult params, XGB was the best performing. For this reason I will apply the Hyper-parameters tuning just for xgb. 
 
@@ -462,11 +453,11 @@ ggplot(my_data, aes(predicted, observed)) +
     scale_y_continuous(labels = scales::comma)
 ```
 
-### XGBoost
+## XGBoost
 
 In this section we'll use xgb. First, we have to transform the data to allow xgb to work. We need to create dummies and to cast the data into a matrix. Furthermore, I will apply information gain to optimize the model. 
 
-```{r XGBoost - Prep, warning=FALSE}
+```{r XGBoost - Prep, warning=FALSE, results="hide"}
 xgb_training <- caret::dummyVars(formula= ~., data = training, fullRank=T,sep = "_")
 xgb_training <- data.table(predict(xgb_training, newdata = training))
 xgb_bench_training <- as.matrix(xgb_training[, !'price', with=F])
@@ -503,7 +494,7 @@ xgb_ig_validation <- as.matrix(xgb_ig_validation[, !'price', with=F])
 
 Now let's define our first model using all the default params
 
-```{r XGBoost - model, warning=FALSE}
+```{r XGBoost - model, warning=FALSE, results="hide"}
 # defining the model
 xgb_0<-xgboost(booster='gbtree',
                data=xgb_bench_training,
@@ -531,18 +522,18 @@ ggplot(my_data, aes(predicted, observed)) +
     scale_y_continuous(labels = scales::comma)
 ```
 
-### XGB Optimized
+## XGB Optimized
 
 To have a better performance I will use grid-search function to find the optimal value of the function's hyperparameters.
 
-```{r XGBoost Opt - params selection, warning=FALSE}
+```{r XGBoost Opt - params selection, warning=FALSE, results="hide"}
 # finding the best combination of hyperparameters
 optmimized_param <- GridSerarch_xgb(xgb_ig_training, training$price)
 ```
 
 Now we will define the model with the best hyperparameters.
 
-```{r XGBoost Opt - final model, warning=FALSE}
+```{r XGBoost Opt - final model, results="hide", warning=FALSE}
 # Defining the model 
 xgb_opt<-xgboost(booster='gbtree',
                data=xgb_ig_training,
@@ -575,7 +566,7 @@ ggplot(my_data, aes(predicted, observed)) +
     scale_y_continuous(labels = scales::comma)
 ```
 
-### Regression with StepWise feature selection 
+## Regression with StepWise feature selection 
 
 In this secion we'll try to apply Regression with StepWise feature selection. 
 
@@ -611,7 +602,7 @@ ggplot(my_data, aes(predicted, observed)) +
     scale_y_continuous(labels = scales::comma)
 ```
 
-### Regression with regularization
+## Regression with regularization
 
 in this section wel'll try to apply Regression with regularization
 
