@@ -16,6 +16,9 @@ source('functions/baseline.R')
 source('functions/lm_cross_validation.R')
 source('functions/information_gain_CV.R')
 source('functions/lasso_CV.R')
+source('functions/GridSearch_xgb.R')
+source('functions/xgb_CrossValidation.R')
+source('functions/Information_gain_xgb_CV.R')
 formula<-as.formula(price~.) 
 ```
 
@@ -50,7 +53,7 @@ summary(dataset)
 
 In this section I am going to preform some data cleaning.
 
-The feature `Id` and `deta` are not going to offer any advantage for prediction.
+The feature `Id` and `date` are not going to offer any advantage for prediction.
 
 ```{r Data cleaning}
 dataset[, c('id', 'date'):=NULL]
@@ -68,8 +71,6 @@ dataset$zipcode <- factor(dataset$zipcode)
 dataset$yr_built <- factor(dataset$yr_built)
 dataset$yr_renovated <- factor(dataset$yr_renovated)
 dataset$view <- factor(dataset$view)
-
-#dataset$date <- as.Date.character(dataset$date, '%m/%d/%Y')
 
 # lets now turn characters into factors
 dataset[ ,names(dataset)[sapply(dataset, is.character)]:=lapply(.SD,as.factor),
@@ -189,11 +190,18 @@ colnames(dataset)
 ```
 
 ```{r Feature Creation}
-# creating a total square feet feature
+# Creating a total square feet feature
 dataset$TotalSqFeet <- as.numeric(dataset$sqft_basement + dataset$sqft_above + dataset$sqft_lot + dataset$sqft_living)
+
 # Creating a Remodrnatoin variable (0 = No Remodeling, 1 = Remodeling)
-dataset$Remod <- ifelse(as.numeric(dataset$yr_built)==as.numeric(dataset$yr_renovated), 0, 1)
+dataset$Remod <- ifelse(dataset$yr_renovated != 0, 1, 0)
 dataset$Remod <- factor(dataset$Remod) 
+
+# Creating a new feature for the total number of rooms in the house
+dataset$rooms <- dataset$bedrooms + dataset$bathrooms
+
+# Creating a new feature with the distance
+dataset$distance <- distGeo(as.matrix(dataset[,c('long','lat')]), c(0,0))
 ```
 
 
@@ -220,6 +228,31 @@ p
 
 # we drop off the former grade variable
 dataset <- dataset[, grade:=NULL]
+```
+
+```{r zipcode - price distribtion}
+# let's see the median price per ZipCode and Bin the ZipCode in 3 chategory of price
+summary(dataset[price!= 0, price])
+```
+
+```{r zipcode - summary}
+dataset[price != 0 ,list(price=median(price)), by = zipcode][order(price)]
+```
+```{r zipcode - plot}
+plot(dataset[price != 0 ,list(price=median(price)), by = zipcode], type="p")
+```
+
+```{r zipcode - classification}
+zip_price <- dataset[price != 0 ,list(price=median(price)), by = zipcode]
+cheep_zip <- zip_price[price < 12.5, zipcode]
+medium_zip <- zip_price[price >= 12.5 & price < 13.5, zipcode]
+exp_zip <- zip_price[price >= 13.5, zipcode]
+
+dataset$NeighBin[dataset$zipcode %in% exp_zip] <- 3
+dataset$NeighBin[dataset$zipcode %in% medium_zip] <- 2
+dataset$NeighBin[dataset$zipcode %in% cheep_zip] <- 1
+
+dataset$NeighBin <- factor(dataset$NeighBin)
 ```
 
 ```{r Categorical summary}
@@ -271,9 +304,9 @@ weights<- data.frame(information.gain(formula, training))
 weights$feature <- rownames(weights)
 weights[order(weights$attr_importance, decreasing = TRUE),]
 information_gain_features <- weights$feature[weights$attr_importance > information_gain_CV(training, validation,
-                                                                                           int_min = 0.002, 
-                                                                                           int_max = 0.006, 
-                                                                                           steps = 0.01)]
+                                                                                           int_min = 0.003, 
+                                                                                           int_max = 0.009, 
+                                                                                           steps = 0.001)]
 
 ig_training <- training[,c(information_gain_features,"price"),with=FALSE]
 ig_test <- test[,c(information_gain_features,"price"),with=FALSE]
@@ -431,21 +464,41 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ### XGBoost
 
-In this section we'll use xgb. First, we have to transform the data to allow xgb to work. We need to create dummies and to cast the data into a matrix
+In this section we'll use xgb. First, we have to transform the data to allow xgb to work. We need to create dummies and to cast the data into a matrix. Furthermore, I will apply information gain to optimize the model. 
 
 ```{r XGBoost - Prep, warning=FALSE}
-xgb_ig_training <- caret::dummyVars(formula= ~., data = ig_training, fullRank=T,sep = "_")
-xgb_ig_training <- data.table(predict(xgb_ig_training, newdata = ig_training))
+xgb_training <- caret::dummyVars(formula= ~., data = training, fullRank=T,sep = "_")
+xgb_training <- data.table(predict(xgb_training, newdata = training))
+xgb_bench_training <- as.matrix(xgb_training[, !'price', with=F])
+
+xgb_validation <- caret::dummyVars(formula= ~., data = validation, fullRank=T,sep = "_")
+xgb_validation <- data.table(predict(xgb_validation, newdata = validation))
+xgb_bench_validation <- as.matrix(xgb_validation[, !'price', with=F])
+
+xgb_test <- caret::dummyVars(formula= ~., data = test, fullRank=T,sep = "_")
+xgb_test <- data.table(predict(xgb_test, newdata = test))
+xgb_bench_test <- as.matrix(xgb_test[, !'price', with=F])
+
+# applying information gain with the optimal trashold found
+weights<- data.frame(information.gain(formula, xgb_training))
+weights$feature <- rownames(weights)
+weights[order(weights$attr_importance, decreasing = TRUE),]
+information_gain_features <- weights$feature[weights$attr_importance > information_gain_xgb_CV(xgb_training,
+                                                                                           xgb_validation,
+                                                                                           xgb_training$price,
+                                                                                           xgb_validation$price,
+                                                                                           int_min = 0.001, 
+                                                                                           int_max = 0.009, 
+                                                                                           steps = 0.001)]
+
+xgb_ig_training <- xgb_training[,c(information_gain_features,"price"),with=FALSE]
 xgb_ig_training <- as.matrix(xgb_ig_training[, !'price', with=F])
 
-xgb_ig_validation <- caret::dummyVars(formula= ~., data = ig_validation, fullRank=T,sep = "_")
-xgb_ig_validation <- data.table(predict(xgb_ig_validation, newdata = ig_validation))
-xgb_ig_validation <- as.matrix(xgb_ig_validation[, !'price', with=F])
-
-xgb_ig_test <- caret::dummyVars(formula= ~., data = ig_test, fullRank=T,sep = "_")
-xgb_ig_test <- data.table(predict(xgb_ig_test, newdata = ig_test))
+xgb_ig_test <- xgb_test[,c(information_gain_features,"price"),with=FALSE]
 xgb_ig_test <- as.matrix(xgb_ig_test[, !'price', with=F])
 
+xgb_ig_validation <- xgb_validation[,c(information_gain_features,"price"),with=FALSE]
+xgb_ig_validation <- as.matrix(xgb_ig_validation[, !'price', with=F])
 ```
 
 Now let's define our first model using all the default params
@@ -453,12 +506,12 @@ Now let's define our first model using all the default params
 ```{r XGBoost - model, warning=FALSE}
 # defining the model
 xgb_0<-xgboost(booster='gbtree',
-               data=xgb_ig_training,
+               data=xgb_bench_training,
                label= training$price,
                nrounds = 100,
                objective='reg:linear')
 
-xgb.pred<-predict(xgb_0, newdata = xgb_ig_validation, type='response')
+xgb.pred<-predict(xgb_0, newdata = xgb_bench_validation, type='response')
 
 ```
 
@@ -480,60 +533,11 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ### XGB Optimized
 
-To have a better performance I will use grid-search to find the optimal value of the function's hyperparameters.
-
-```{r XGBoost Opt , warning=FALSE}
-searchGridSubCol <- expand.grid(subsample = c(0.9, 1), 
-                                colsample_bytree = c(0.5, 0.6),
-                                max_depth = c(8, 9),
-                                min_child = seq(1), 
-                                eta = c(0.1, 0.2),
-                                gamma = c(1)
-)
-
-ntrees <- 100
-
-system.time(
-rmseErrorsHyperparameters <- apply(searchGridSubCol, 1, function(parameterList){
-  
-  #Extract Parameters to test
-  currentSubsampleRate <- parameterList[["subsample"]]
-  currentColsampleRate <- parameterList[["colsample_bytree"]]
-  currentDepth <- parameterList[["max_depth"]]
-  currentEta <- parameterList[["eta"]]
-  currentMinChild <- parameterList[["min_child"]]
-  currentgamma <- parameterList[["gamma"]]
-  xgboostModelCV <- xgb.cv(data =  xgb_ig_training, 
-                           label = training$price, 
-                           nrounds = ntrees, 
-                           nfold = 5, 
-                           showsd = TRUE, 
-                           metrics = "rmse", 
-                           verbose = TRUE, 
-                           "eval_metric" = "rmse",
-                           "objective" = "reg:linear", 
-                           "max.depth" = currentDepth,
-                           "eta" = currentEta, 
-                           "gamma" = currentgamma,
-                           "subsample" = currentSubsampleRate, 
-                           "colsample_bytree" = currentColsampleRate, 
-                           print_every_n = 10, 
-                           "min_child_weight" = currentMinChild, 
-                           booster = "gbtree",
-                           early_stopping_rounds = 10)
-  
-  xvalidationScores <- as.data.frame(xgboostModelCV$evaluation_log)
-  rmse <- tail(xvalidationScores$test_rmse_mean, 1)
-  trmse <- tail(xvalidationScores$train_rmse_mean,1)
-  output <- return(c(rmse, trmse, currentSubsampleRate, currentColsampleRate, currentDepth, currentEta, currentMinChild))}))
-```
+To have a better performance I will use grid-search function to find the optimal value of the function's hyperparameters.
 
 ```{r XGBoost Opt - params selection, warning=FALSE}
 # finding the best combination of hyperparameters
-output <- as.data.table(t(rmseErrorsHyperparameters))
-varnames <- c("TestRMSE", "TrainRMSE", "SubSampRate", "ColSampRate", "Depth", "eta", "gamma")
-names(output) <- varnames
-optmimized_param <- output[TestRMSE == min(TestRMSE),3:7]
+optmimized_param <- GridSerarch_xgb(xgb_ig_training, training$price)
 ```
 
 Now we will define the model with the best hyperparameters.
@@ -543,7 +547,7 @@ Now we will define the model with the best hyperparameters.
 xgb_opt<-xgboost(booster='gbtree',
                data=xgb_ig_training,
                label= training$price,
-               nrounds = ntrees,
+               nrounds = 100,
                max.depth = optmimized_param[,'Depth'],
                eta = optmimized_param[,'eta'],
                subsample = optmimized_param[,'SubSampRate'],
