@@ -28,32 +28,32 @@ formula<-as.formula(price~.)
 
 # Introduction
 
-This assignment focuses on applying the Feature Engineering processes and the Evaluation methods to solve a practical scenario: Predict the price of houses.
+This project focuses on applying the Feature Engineering processes and the Evaluation methods to solve a practical scenario: Predict the price of houses.
 
 # Data Reading and preparation
 
-The dataset is offered in two separated fields, one for the training and another one for the test set. 
+The dataset is offered in two separate fields, one for the training and another one for the test set. 
 
 ```{r Load Data}
 original_training_data = read.csv(file = file.path("dataset/house_price_train.csv"))
 original_test_data = read.csv(file = file.path("dataset/house_price_test.csv"))
 ```
 
-To avoid applying the Feature Engineering process twice (once for training and once for test), I will join both datasets, apply the FE and then split the datasets again. However, if I try to do join the two dataframes as they are, we will get an error because they do not have the same columns: `test_data` does not have a column `price`. Therefore, I first create this column in the test set and then we join the data
+To avoid applying the Feature Engineering process twice (once for training and once for test), I will join both datasets, apply the FE and then split the datasets again. However, if I try to join the two dataframes as they are, we will get an error because they do not have the same columns: `test_data` does not have a column `price`. Therefore, I first create this column in the test set and then I join the data.
 
 ```{r Joinning datasets}
 original_test_data$price <- 0
 dataset <- as.data.table(rbind(original_training_data, original_test_data))
 ```
 
-Let's now visualize the dataset to see where to begin
+Let's now visualize the dataset to see where to begin.
 ```{r Dataset Visualization, echo=FALSE}
 summary(dataset)
 ```
 
 # Data Cleaning
 
-In this section I am going to preform some data cleaning.
+In this section I am going to perform some data cleaning.
 
 The feature `Id` and `date` are not going to offer any advantage for prediction.
 
@@ -64,7 +64,7 @@ colnames(dataset)
 
 ## Factorize features
 
-If we go back to the summary of the dataset we can identify some numerical features that are actually categories: What we have to do is to convert them to the proper 'class' or 'type'.
+If we go back to the summary of the dataset we can identify some numerical features that are actually categories: What we have to do is to convert them into the proper 'class' or 'type'.
 
 ```{r Factorize features, warning=FALSE}
 dataset$condition <- factor(dataset$condition)
@@ -74,24 +74,24 @@ dataset$yr_built <- factor(dataset$yr_built)
 dataset$yr_renovated <- factor(dataset$yr_renovated)
 dataset$view <- factor(dataset$view)
 
-# lets now turn characters into factors
+# Lets now turn characters into factors
 dataset[ ,names(dataset)[sapply(dataset, is.character)]:=lapply(.SD,as.factor),
            .SDcols = names(dataset)[sapply(dataset, is.character)]]
 ```
 
 ## Hunting NAs
 
-Let's check if there are NAs in the dataset
+Let's check if there are NAs in the dataset.
 
 ```{r NAs discovery}
-#Counting columns with null values.
+# Counting columns with null values.
 na.cols <- which(colSums(is.na(dataset)) > 0)
 paste('There are', length(na.cols), 'columns with missing values')
 ```
 
 ## Outliers
 
-We will now focus on numerical values. In this section I will detect numerical features which present outliers and I will clip those values.
+We will now focus on numerical values. In this section, I will detect numerical features which present outliers and I will clip those values.
 
 
 ```{r detecting Outliers, echo=FALSE}
@@ -102,7 +102,7 @@ column_types <- sapply(names(dataset), function(x) {
 )
 numeric_columns <- names(column_types[column_types != "factor"])
 
-# Identify the the feature with outliers
+# Identify the feature with the outliers
 outliers <- scores(dataset[,numeric_columns, with=FALSE], type="chisq", prob=0.9)
 per_outliers <- sort(((colSums(outliers)/length(dataset$price))*100), decreasing = TRUE)
 col_outliers_to_remove <- names(per_outliers[per_outliers > 5 & names(per_outliers) != 'lat' 
@@ -115,7 +115,7 @@ for (i in col_outliers_to_remove){
 ```
 
 ```{r Clipping Outliers}
-# clipping the outliers
+# Clipping the outliers
 for (i in col_outliers_to_remove){
   qnt <- quantile(dataset[[i]], probs=c(.25, .75))
   caps <- quantile(dataset[[i]], probs=c(.05, .95))
@@ -124,7 +124,7 @@ for (i in col_outliers_to_remove){
   dataset[[i]][dataset[[i]] > (qnt[2] + H)] <- caps[2]
 }
 
-# Plot again the box plots to verify if the procedure has been succesful
+# Plot again the box plots to verify if the procedure has been successful
 for (i in col_outliers_to_remove){
   boxplot(dataset[,i, with=FALSE], type="p", xlab=i)
 }
@@ -132,10 +132,10 @@ for (i in col_outliers_to_remove){
 
 ## Skewness
 
-We now need to detect skewness in the Target value. Let's see what is the effect of skewness on a variable, and plot it using ggplot. In order to get rid of the skewness I will use the `log` of the values of that feature, to flatten it.
+We now need to detect skewness in the Target value. Let's see what is the effect of skewness on a variable, and plot it using ggplot. In order to get rid of the skewness, I will use the `log` of the values of that feature, to flatten it.
 
 ```{r Skewness, echo=FALSE}
-# plot the skewness of the target variable
+# Plot the skewness of the target variable
 df <- rbind(data.frame(version="price",x=original_training_data$price),
             data.frame(version="log(price+1)",x=log(original_training_data$price + 1)))
 
@@ -144,12 +144,12 @@ ggplot(data=df) +
   geom_histogram(aes(x=x), bins = 50)
 ```
 
-We therefore transform the target value applying log
+We therefore transform the target value by applying log.
 
-The same "skewness" observed in the target variable also affects other variables. To facilitate the application of the regression model we are going to also eliminate this skewness. For numeric feature with excessive skewness, perform log transformation
+The same "skewness" observed in the target variable also affects other variables. To facilitate the application of the regression model we are going to also eliminate this skewness. For numeric feature with excessive skewness, we will perform log transformation.
 
 ```{r Skewness threshold, include=FALSE}
-# setting up a threshold to decide to which numeric feature apply the log transformation
+# Setting up a threshold to decide to which numeric feature applying the log transformation
 skewness_threshold = 1
 ```
 
@@ -164,20 +164,20 @@ numeric_columns <- names(column_types[column_types != "factor"])
 numeric_columns <- numeric_columns[numeric_columns != 'lat' & numeric_columns != 'long']
 ```
 
-At this point, we need to calculate the skewness of each numerical column.
+At this stage, we need to calculate the skewness of each numerical column.
 
 ```{r skew handling}
-# skew of each variable
+# Skew of each variable
 skew <- sapply(numeric_columns, function(x) { 
     e1071::skewness(dataset[[x]], na.rm = T)
   }
 )
 ```
 
-To reduce the skewness in the entire dataset it is possible to apply the log for those column with a skewness value greater than a given threshold that we've set in 1.
+To reduce the skewness in the entire dataset it is possible to apply the log for those column with a skewness value greater than a given threshold that we have set in 1.
 
 ```{r skew transformation}
-# transform all variables above a threshold skewness.
+# Transform all variables above a threshold skewness.
 skew <- skew[abs(skew) > skewness_threshold]
 for(x in names(skew)) {
   dataset[[x]] <- log(dataset[[x]] + 1)
@@ -186,10 +186,10 @@ for(x in names(skew)) {
 
 # Feature Creation
 
-In this section I will create some new features to improve the predictive power of the dataset.
+In this section, I will create some new features to improve the predictive power of the dataset.
 
 ```{r}
-# having a look at the columns
+# Having a look at the columns
 colnames(dataset)
 ```
 
@@ -197,7 +197,7 @@ colnames(dataset)
 # Creating a total square feet feature
 dataset$TotalSqFeet <- as.numeric(dataset$sqft_basement + dataset$sqft_above + dataset$sqft_lot + dataset$sqft_living)
 
-# Creating a Remodrnatoin variable (0 = No Remodeling, 1 = Remodeling)
+# Creating a Remodernation variable (0 = No Remodeling, 1 = Remodeling)
 dataset$Remod <- ifelse(dataset$yr_renovated != 0, 1, 0)
 dataset$Remod <- factor(dataset$Remod) 
 
@@ -220,20 +220,20 @@ sum(summary(dataset$grade_agg)/nrow(dataset))
 
 dataset[, length(levels(grade_agg))]
 dataset[, length(levels(grade))]
-dataset[, length(levels(grade_agg))/length(levels(grade))-1] # important reduction in factor cathegories
+dataset[, length(levels(grade_agg))/length(levels(grade))-1] # Important reduction in factor cathegories
 dataset[, grade_agg:=factor(grade_agg, levels=names(sort(summary(dataset$grade_agg), dec=T)))]
 
-# we drop off the former grade variable
+# We drop off the former grade variable
 dataset <- dataset[, grade:=NULL]
 ```
 
 ```{r Others label - plot}
-# let's see the median price per ZipCode and Bin the ZipCode in 3 chategory of price
+# Let's see the median price per ZipCode and Bin the ZipCode in 3 categories of price
 summary(dataset[price!= 0, price])
 ```
 
 ```{r zipcode - price distribtion}
-# let's see the median price per ZipCode and Bin the ZipCode in 3 chategory of price
+# Let's see the median price per ZipCode and Bin the ZipCode in 3 categories of price
 summary(dataset[price!= 0, price])
 ```
 
@@ -251,7 +251,7 @@ cheep_zip <- zip_price[price < 12.5, zipcode]
 medium_zip <- zip_price[price >= 12.5 & price < 13.5, zipcode]
 exp_zip <- zip_price[price >= 13.5, zipcode]
 
-# Applyng the bins
+# Applying the bins
 dataset$NeighBin[dataset$zipcode %in% exp_zip] <- 3
 dataset$NeighBin[dataset$zipcode %in% medium_zip] <- 2
 dataset$NeighBin[dataset$zipcode %in% cheep_zip] <- 1
@@ -262,7 +262,7 @@ dataset$NeighBin <- factor(dataset$NeighBin)
 
 # Modelling
 
-## Train, Validation Spliting
+## Train, Validation, Splitting
 
 To facilitate the data cleaning and feature engineering we merged train and test datasets. We now split them again to create our final model.
 
@@ -271,7 +271,7 @@ training_data <- dataset[which(dataset$price!=0),]
 test <- dataset[which(dataset$price==0),]
 ```
 
-We are going to split the annotated dataset in training and validation for the later evaluation of our regression models
+We are going to split the annotated dataset in training and validation for the later evaluation of our regression models.
 ```{r Train Validation split}
 splits <- splitdf(training_data)
 training <- splits$trainset
@@ -289,10 +289,10 @@ lm.model(training, validation, "Baseline")
 
 ## Information Gain Selection
 
-Let's try to use information gain to select the most important variables. In this section I will also use a cross validation procedure to select the best threshold for my model. As it is possible to notice the results are better than the baseline so from now on I will use the ig_training for all the models.
+Let's try to use information gain to select the most important variables. In this section, I will also use a cross validation procedure to select the best threshold for my model. As it is possible to notice, the results are better than the baseline. Indeed, from now on, I will use the ig_training for all the models.
 
 ```{r cross validation information gain, message=FALSE, warning=FALSE}
-# applying information gain with the optimal trashold found
+# Applying information gain with the optimal threshold found
 weights<- data.frame(information.gain(formula, training))
 weights$feature <- rownames(weights)
 weights[order(weights$attr_importance, decreasing = TRUE),]
@@ -311,7 +311,7 @@ lm.model(ig_training, ig_validation, "Information Gain")
 
 ## Ridge Regression
 
-Let's try the Ridge Regression
+Let's try the Ridge Regression.
 ```{r Ridge Regression, warning=FALSE}
 lambdas <- 10^seq(-3, 0, by = .05)
 
@@ -335,14 +335,14 @@ Small values seem to work better for this dataset.
 plot(ridge.mod)
 ```
 
-Plotting the coefficients for different lambda values. As expected the larger the lambda (lower Norm) value the smaller the coefficients of the features. However, as we can see at the top of the features, there is no feature selection; i.e., the model always consider the 277 parameters.
+Plotting the coefficients for different lambda values. As expected, the larger the lambda (lower Norm) value, the smaller the coefficients of the features. However, as we can see at the top of the features, there is no feature selection; i.e., the model always considers the 277 parameters.
 
 ```{r Ridge Coefficients}
 plot(ridge.mod$finalModel)
 ```
 
 ```{r Ridge Evaluation}
-# evaluating the model 
+# Evaluating the model 
 ridge.mod.pred <- predict(ridge.mod, ig_validation)
 ridge.mod.pred[is.na(ridge.mod.pred)] <- 0
 
@@ -350,7 +350,7 @@ my_data <- as.data.frame(cbind(predicted=(exp(ridge.mod.pred) -1), observed=(exp
 ridge.mod.mape <- mape(ig_validation$price, ridge.mod.pred)
 ridge.mod.price_error <- mean(abs((exp(ridge.mod.pred) -1) - (exp(validation$price) -1)))
 
-# plottong the results
+# Plotting the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -369,10 +369,10 @@ plot(varImp(ridge.mod), top = 20) # 20 most important features
 
 ## Lasso Regresion
 
-Now Let's try lasso in combination with information gain. Moreover, I will use cross validation to identify the best number of seed
+Now let's try lasso in combination with information gain. Moreover, I will use cross validation to identify the best number of seed.
 
 ```{r Lasso Regression, warning=FALSE}
-# applying the lasso regression with the optimal seed value found above.
+# Applying the lasso regression with the optimal seed value found above.
 lambdas <- 10^seq(-3, 0, by = .05)
 
 set.seed(lasso_CV(training, validation,20,60,10))
@@ -404,7 +404,7 @@ plot(lasso.mod$finalModel)
 ```
 
 ```{r lasso Evaluation}
-# evaluating the model
+# Evaluating the model
 lasso.mod.pred <- predict(lasso.mod, ig_validation)
 lasso.mod.pred[is.na(lasso.mod.pred)] <- 0
 
@@ -412,7 +412,7 @@ my_data <- as.data.frame(cbind(predicted=(exp(lasso.mod.pred) -1), observed=(exp
 lasso.mod.mape <- mape(lasso.mod.pred, validation$price)
 lasso.mod.price_error <- mean(abs((exp(lasso.mod.pred) -1) - (exp(validation$price) -1)))
 
-# plotting the results
+# Plotting the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -431,19 +431,19 @@ plot(varImp(lasso.mod), top = 20) # 20 most important features
 
 ## Random Forest
 
-Now Let's try Random Forest. After running all the models with the the defoult params, XGB was the best performing. For this reason I will apply the Hyper-parameters tuning just for xgb. 
+Now let's try Random Forest. After running all the models with the the defoult params, XGB was the best performing. For this reason, I will apply the Hyper-parameters tuning just for xgb. 
 
 ```{r Random Forest, warning=FALSE}
-# defining the model
+# Defining the model
 rf_0<-ranger(formula=formula, data=ig_training)
 rf.pred<-predict(rf_0, data = ig_validation)$predictions
 
-# evaluation
+# Evaluation
 rf.mape <- mape(rf.pred, validation$price)
 rf.price_error <- mean(abs((exp(rf.pred) -1) - (exp(validation$price) -1)))
 my_data <- as.data.frame(cbind(predicted=(exp(rf.pred) -1), observed=(exp(validation$price) -1)))
 
-# plotting the results
+# Plotting the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -455,7 +455,7 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ## XGBoost
 
-In this section we'll use xgb. First, we have to transform the data to allow xgb to work. We need to create dummies and to cast the data into a matrix. Furthermore, I will apply information gain to optimize the model. 
+In this section, we will use xgb. First, we have to transform the data to allow xgb to work. We need to create dummies and to cast the data into a matrix. Furthermore, I will apply information gain to optimize the model. 
 
 ```{r XGBoost - Prep, warning=FALSE, results="hide"}
 xgb_training <- caret::dummyVars(formula= ~., data = training, fullRank=T,sep = "_")
@@ -470,7 +470,7 @@ xgb_test <- caret::dummyVars(formula= ~., data = test, fullRank=T,sep = "_")
 xgb_test <- data.table(predict(xgb_test, newdata = test))
 xgb_bench_test <- as.matrix(xgb_test[, !'price', with=F])
 
-# applying information gain with the optimal trashold found
+# Applying information gain with the optimal trashold found
 weights<- data.frame(information.gain(formula, xgb_training))
 weights$feature <- rownames(weights)
 weights[order(weights$attr_importance, decreasing = TRUE),]
@@ -492,10 +492,10 @@ xgb_ig_validation <- xgb_validation[,c(information_gain_features,"price"),with=F
 xgb_ig_validation <- as.matrix(xgb_ig_validation[, !'price', with=F])
 ```
 
-Now let's define our first model using all the default params
+Now, let's define our first model using all the default parameters. 
 
 ```{r XGBoost - model, warning=FALSE, results="hide"}
-# defining the model
+# Defining the model
 xgb_0<-xgboost(booster='gbtree',
                data=xgb_bench_training,
                label= training$price,
@@ -507,7 +507,7 @@ xgb.pred<-predict(xgb_0, newdata = xgb_bench_validation, type='response')
 ```
 
 ```{r XGBoost - plot, warning=FALSE}
-# evaluation
+# Evaluation
 xgb.mape <- mape(xgb.pred, validation$price)
 xgb.price_error <- mean(abs((exp(xgb.pred) -1) - (exp(validation$price) -1)))
 my_data <- as.data.frame(cbind(predicted=(exp(xgb.pred) -1), observed=(exp(validation$price) -1)))
@@ -524,14 +524,14 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ## XGB Optimized
 
-To have a better performance I will use grid-search function to find the optimal value of the function's hyperparameters.
+To have a better performance, I will use grid-search function to find the optimal value of the function's hyperparameters.
 
 ```{r XGBoost Opt - params selection, warning=FALSE, results="hide"}
-# finding the best combination of hyperparameters
+# Finding the best combination of hyperparameters
 optmimized_param <- GridSerarch_xgb(xgb_ig_training, training$price)
 ```
 
-Now we will define the model with the best hyperparameters.
+Now, we will define the model with the best hyperparameters.
 
 ```{r XGBoost Opt - final model, results="hide", warning=FALSE}
 # Defining the model 
@@ -551,12 +551,12 @@ xgb.pred.opt<-predict(xgb_opt, newdata = xgb_ig_validation, type='response')
 
 
 ```{r XGBoost Opt - plot, warning=FALSE}
-# evaluation
+# Evaluation
 xgb.mape <- mape(xgb.pred.opt, validation$price)
 xgb.price_error <- mean(abs((exp(xgb.pred.opt) -1) - (exp(validation$price) -1)))
 my_data <- as.data.frame(cbind(predicted=(exp(xgb.pred.opt) -1), observed=(exp(validation$price) -1)))
 
-# plotting the results
+# Plotting the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -566,12 +566,12 @@ ggplot(my_data, aes(predicted, observed)) +
     scale_y_continuous(labels = scales::comma)
 ```
 
-## Regression with StepWise feature selection 
+## Regression with StepWise feature selection
 
 In this secion we'll try to apply Regression with StepWise feature selection. 
 
 ```{r Regression with StepWise feature selection, warning=FALSE}
-# adapting the dataset to work for the algorithm
+# Adapting the dataset to work for the algorithm
 lm_ig_training <- ig_training
 lm_ig_training$yr_built <- as.numeric(lm_ig_training$yr_built)
 lm_ig_training$yr_renovated <- as.numeric(lm_ig_training$yr_renovated)
@@ -580,19 +580,19 @@ lm_ig_validation <- ig_validation
 lm_ig_validation$yr_built <- as.numeric(lm_ig_validation$yr_built)
 lm_ig_validation$yr_renovated <- as.numeric(lm_ig_validation$yr_renovated)
 
-#### Regression with StepWise feature selection 
+# Regression with StepWise feature selection 
 lm_0<-stepAIC(lm(formula = formula, 
                  data=lm_ig_training),
               trace=F)
 
 lm.pred<-predict(lm_0, newdata = lm_ig_validation)
 
-# evaluation
+# Evaluation
 lm.mape <- mape(lm.pred, validation$price)
 lm.price_error <- mean(abs((exp(lm.pred) -1) - (exp(validation$price) -1)))
 my_data <- as.data.frame(cbind(predicted=(exp(lm.pred) -1), observed=(exp(validation$price) -1)))
 
-# plotting the results
+# Plotting the results
 ggplot(my_data, aes(predicted, observed)) +
     geom_point() + geom_smooth(method = "glm") +
     labs(x="Predicted") +
@@ -604,7 +604,7 @@ ggplot(my_data, aes(predicted, observed)) +
 
 ## Regression with regularization
 
-in this section wel'll try to apply Regression with regularization
+In this section, we will try to apply Regression with regularization.
 
 ```{r Regression with regularization, warning=FALSE}
 # Defining the model
@@ -639,11 +639,11 @@ ggplot(my_data, aes(s0, observed)) +
 ```
 
 # Final Submission
-We splitted the original training data into train and validation to evaluate the candidate models. In order to generate the final submission we have to take instead all the data at our disposal.
+We splitted the original training data into train and validation to evaluate the candidate models. In order to generate the final submission, we have to take instead all the data at our disposal.
 
 In addition, we also applied a log transformation to the target variable, to revert this transformation you have to use the exp function.
 
-In order to do my prediction I have tried all the combination of the models explained above. The best model is the optimized xgb.
+In order to do my prediction, I have tried all the combination of the models explained above. The best model is the optimized xgb.
 
 ```{r Final Submission}
 # Train the model using all the data
@@ -652,8 +652,7 @@ final.model <- xgb_opt
 # Predict the prices for the test data (i.e., we use the exp function to revert the log transformation that we applied to the target variable)
 final.pred <- as.numeric(exp(predict(final.model, xgb_ig_test, type='response'))-1)
 final.pred[is.na(final.pred)]
-hist(final.pred, main="Histogram of Predictions", xlab = "Predictions")
-
+ 
 xgb_submission <- data.frame(Id = original_test_data$id, price= (final.pred))
 colnames(xgb_submission) <-c("Id", "price")
 write.csv(xgb_submission, file = "submission1.csv", row.names = FALSE) 
